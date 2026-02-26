@@ -11,10 +11,14 @@ class Core
 {
     private static string $prefixController = 'App\\Controllers\\';
     private static string $templateController = "Website";
-    
-    public function __construct()
+
+    private static function resolveTemplateController(): string
     {
-        $this->templateController = self::twoFactorAuth() ? $_ENV['DEFAULT_DASHBOARD_CONTENT'] : (self::checkAuth() ? $_ENV['DEFAULT_DASHBOARD_CONTENT'] : $_ENV['DEFAULT_WEBSITE_CONTENT']);
+        if (self::twoFactorAuth() || self::checkAuth()) {
+            return $_ENV['DEFAULT_DASHBOARD_CONTENT'] ?? self::$templateController;
+        }
+
+        return $_ENV['DEFAULT_WEBSITE_CONTENT'] ?? self::$templateController;
     }
 
     public static function twoFactorAuth(): bool
@@ -53,12 +57,14 @@ class Core
 
     public static function dispatch(array $routes): void
     {
+        self::$templateController = self::resolveTemplateController();
+
         $url = self::getRequestUrl();
         $method = Request::method(); // Obtém o método atual (GET, POST, etc)
         $routeFound = false;
 
         $subdomain = self::getSubdomainHost();
-        $controllerPrefix = self::$prefixController . $subdomain . self::$templateController . '\\';
+        $controllerBaseNamespace = self::$prefixController . $subdomain;
 
         // AJUSTE AQUI: Acessamos apenas as rotas do método atual
         $relevantRoutes = $routes[$method] ?? [];
@@ -89,8 +95,6 @@ class Core
                 }
 
                 $class = str_replace('/', '\\', "App\Controllers\\" . $controller);
-                $controllerFullNamespace = $controllerPrefix . str_replace('/', '\\', $controller);
-
                 // Verificação de existência da classe e método
                 if (class_exists($class)) {
                     $controllerInstance = new $class();
@@ -122,13 +126,13 @@ class Core
 
         // Se não encontrou nenhuma rota compatível para o método informado
         if (!$routeFound) {
-            self::handleNotFound($controllerPrefix);
+            self::handleNotFound($controllerBaseNamespace);
         }
     }
 
-    private static function handleNotFound(string $controllerPrefix): void
+    private static function handleNotFound(string $controllerBaseNamespace): void
     {
-        $controller = $controllerPrefix . self::$templateController . 'NotFoundController';
+        $controller = $controllerBaseNamespace . self::$templateController . '\\NotFoundController';
 
         if (!class_exists($controller)) {
             $controller = self::$prefixController . ucfirst($_ENV['DEFAULT_SYSTEM_CONTENT']) . '\\' . self::$templateController .'\\NotFoundController';
@@ -140,8 +144,8 @@ class Core
 
     public static function getSubdomainHost(): string
     {
-        $host       = filter_var($_SERVER['HTTP_HOST'], FILTER_SANITIZE_URL);
-        $domain     = filter_var($_SERVER['DEFAULT_DOMINIO'], FILTER_SANITIZE_URL);
+        $host       = filter_var($_SERVER['HTTP_HOST'] ?? '', FILTER_SANITIZE_URL);
+        $domain     = filter_var($_SERVER['DEFAULT_DOMINIO'] ?? ($_ENV['DEFAULT_DOMINIO'] ?? ''), FILTER_SANITIZE_URL);
         $host       = preg_replace('/^www./', '', $host);
         $domain     = preg_replace('/^www./', '', $domain);
 
