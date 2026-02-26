@@ -6,6 +6,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use RuntimeException;
 use Exception;
+use JsonException;
 
 class CacheManager
 {
@@ -44,7 +45,7 @@ class CacheManager
     public function get(string $key): mixed
     {
         // 1. Check na memória (L1 Cache)
-        if (isset($this->memoryCache[$key])) {
+        if (array_key_exists($key, $this->memoryCache)) {
             return $this->memoryCache[$key];
         }
 
@@ -56,12 +57,21 @@ class CacheManager
 
         try {
             $content = file_get_contents($path);
-            if (!$content) return null;
+            if ($content === false) {
+                return null;
+            }
 
             $json = gzdecode($content);
-            if (!$json) throw new Exception("Falha ao descompactar.");
+            if ($json === false) {
+                throw new Exception("Falha ao descompactar.");
+            }
 
-            $payload = json_decode($json, true);
+            $payload = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+
+            if (!$this->isValidPayload($payload)) {
+                $this->delete($key);
+                return null;
+            }
             
             // Validação de integridade e expiração
             if ($this->isExpired($payload) || !$this->verifyChecksum($payload)) {
@@ -71,7 +81,7 @@ class CacheManager
 
             return $this->memoryCache[$key] = $payload['data'];
 
-        } catch (Exception $e) {
+        } catch (Exception | JsonException $e) {
             $this->logError("Erro ao ler cache [{$key}]: " . $e->getMessage());
             return null;
         }
@@ -86,7 +96,7 @@ class CacheManager
             $path = $this->getFilePath($key);
             $this->ensureDirectoryExists(dirname($path));
 
-            $dataJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $dataJson = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
             
             $payload = [
                 'data'       => $data,
@@ -95,7 +105,12 @@ class CacheManager
                 'checksum'   => hash('sha256', $dataJson) // Checksum direto do JSON dos dados
             ];
 
-            $compressed = gzencode(json_encode($payload, JSON_UNESCAPED_UNICODE));
+            $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            $compressed = gzencode($payloadJson);
+
+            if ($compressed === false) {
+                throw new RuntimeException('Falha ao compactar payload do cache.');
+            }
             
             if (file_put_contents($path, $compressed, LOCK_EX)) {
                 $this->memoryCache[$key] = $data;
@@ -103,7 +118,7 @@ class CacheManager
             }
 
             return false;
-        } catch (Exception $e) {
+        } catch (Exception | JsonException $e) {
             $this->logError("Erro ao gravar cache [{$key}]: " . $e->getMessage());
             return false;
         }
@@ -155,14 +170,41 @@ class CacheManager
 
     private function isExpired(array $payload): bool
     {
-        if ($payload['ttl'] <= 0) return false;
-        return (time() - $payload['created_at']) > $payload['ttl'];
+        if ((int) $payload['ttl'] <= 0) {
+            return false;
+        }
+
+        return (time() - (int) $payload['created_at']) > (int) $payload['ttl'];
     }
 
     private function verifyChecksum(array $payload): bool
     {
-        $currentChecksum = hash('sha256', json_encode($payload['data'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $json = json_encode($payload['data'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            return false;
+        }
+
+        $currentChecksum = hash('sha256', $json);
         return hash_equals($payload['checksum'], $currentChecksum);
+    }
+
+    private function isValidPayload(mixed $payload): bool
+    {
+        if (!is_array($payload)) {
+            return false;
+        }
+
+        foreach (['data', 'created_at', 'ttl', 'checksum'] as $requiredField) {
+            if (!array_key_exists($requiredField, $payload)) {
+                return false;
+            }
+        }
+
+        if (!is_int($payload['created_at']) || !is_int($payload['ttl'])) {
+            return false;
+        }
+
+        return is_string($payload['checksum']) && $payload['checksum'] !== '';
     }
 
     private function ensureDirectoryExists(string $path): void
