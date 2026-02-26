@@ -3,16 +3,13 @@
 use App\Http\Route;
 
 # | ************************************* | #
-# |  Routes Website Login                 | #
+# |  Routes Website                       | #
 # | ************************************* | #
 
-Route::group(['prefix' => '/'], function () {
+Route::group(['prefix' => '/'], function (): void {
+    $controller = 'App/Website/HomeController';
 
-    # | Define a controller
-    $controller = "App/Website/HomeController";
-
-    # | Listagem das empresas para emissão de NF's
-    # | Agora, esta rota "/" só será acessível se o middleware "auth" permitir.
-    Route::get("/", "{$controller}@index");
-
+    Route::get('/', "{$controller}@index", ['as' => 'website.home']);
 });
+
+Route::redirect('/home', '/');
