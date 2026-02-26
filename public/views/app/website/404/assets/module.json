@@ -1,0 +1,52 @@
+{
+    "name"      : "404",
+    "description"   : "Descrição da Página",
+    "version"   : "1.0.0",
+    "lang"      : "pt-BR",
+    "charset"   : "UTF-8",
+    "seo": {
+        "title" : "Página não encontrada",
+        "meta"  : [
+            {
+                "name"      : "author",
+                "content"   : "Author"
+            },
+            {
+                "name"      : "keywords",
+                "content"   : "Home, Dashboard"
+            },
+            {
+                "name"      : "description",
+                "content"   : "Home"
+            },
+            {
+                "name"      : "viewport",
+                "content"   : "width=device-width, initial-scale=1.0"
+            },
+            {
+                "name"      : "robots",
+                "content"   : "index, follow"
+            },
+            {
+                "name"      : "googlebot",
+                "content"   : "index, follow"
+            }
+        ]
+    },
+    "structure": {
+        "layout"        : true,
+        "sidebar"       : true,
+        "content"       : true,
+        "dark"          : false,
+        "fixed"         : false,
+        "menudark"      : true,
+        "toolbar"       : true,
+        "topmenu"       : true,
+        "topmenudark"   : false,
+        "footer"        : false,
+        "whatsapp"      : true,
+        "ia"            : true
+    },
+    "scripts"   : [],
+    "styles"    : []
+}

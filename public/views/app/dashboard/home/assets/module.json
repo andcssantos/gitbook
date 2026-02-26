@@ -1,0 +1,36 @@
+{
+    "version"   : "1.0.0",
+    "lang"      : "pt-BR",
+    "charset"   : "UTF-8",
+    "seo": {
+        "title" : "Gitbook | Dashboard",
+        "meta"  : [
+            {
+                "name"      : "author",
+                "content"   : "GitBook"
+            },
+            {
+                "name"      : "keywords",
+                "content"   : "GitBook, Home, Dashboard"
+            },
+            {
+                "name"      : "description",
+                "content"   : "Descrição da Página"
+            },
+            {
+                "name"      : "viewport",
+                "content"   : "width=device-width, initial-scale=1.0"
+            },
+            {
+                "name"      : "robots",
+                "content"   : "index, follow"
+            },
+            {
+                "name"      : "googlebot",
+                "content"   : "index, follow"
+            }
+        ]
+    },
+    "plugins"   : [],
+    "styles"    : []
+}

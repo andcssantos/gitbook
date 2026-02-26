@@ -1,0 +1,10 @@
+/.cli
+.env
+.log
+/logs
+/vendor
+/logs
+/logs/**
+/cache/**
+/cache
+composer.lock
