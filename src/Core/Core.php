@@ -2,23 +2,23 @@
 
 namespace App\Core;
 
-use App\Core\RouteMatcher;
 use App\Http\Request;
 use App\Http\Response;
+use App\Utils\Config;
 use App\Utils\Construct\Auth;
 
 class Core
 {
     private static string $prefixController = 'App\\Controllers\\';
-    private static string $templateController = "Website";
+    private static string $templateController = 'Website';
 
     private static function resolveTemplateController(): string
     {
         if (self::twoFactorAuth() || self::checkAuth()) {
-            return $_ENV['DEFAULT_DASHBOARD_CONTENT'] ?? self::$templateController;
+            return Config::get('routing.default_dashboard_content', self::$templateController);
         }
 
-        return $_ENV['DEFAULT_WEBSITE_CONTENT'] ?? self::$templateController;
+        return Config::get('routing.default_website_content', self::$templateController);
     }
 
     public static function twoFactorAuth(): bool
@@ -48,10 +48,9 @@ class Core
         $auth = $route['options']['auth'] ?? false;
 
         if ($auth && !Auth::check()) {
-            return null; // Retorna null explicitamente se não estiver autenticado
+            return null;
         }
 
-        // O erro ocorria aqui porque $route['path'] não existia no loop antigo
         return RouteMatcher::getParams($route['path'], $url, $queryParams ? $_GET : []);
     }
 
@@ -60,13 +59,12 @@ class Core
         self::$templateController = self::resolveTemplateController();
 
         $url = self::getRequestUrl();
-        $method = Request::method(); // Obtém o método atual (GET, POST, etc)
+        $method = Request::method();
         $routeFound = false;
 
         $subdomain = self::getSubdomainHost();
         $controllerBaseNamespace = self::$prefixController . $subdomain;
 
-        // AJUSTE AQUI: Acessamos apenas as rotas do método atual
         $relevantRoutes = $routes[$method] ?? [];
 
         foreach ($relevantRoutes as $route) {
@@ -75,59 +73,74 @@ class Core
             if ($params !== null) {
                 $routeFound = true;
 
-                // Verificamos se existem middlewares definidos nas opções da rota
                 if (!empty($route['options']['middleware'])) {
                     \App\Http\Middleware::handle((array) $route['options']['middleware']);
                 }
 
-                // Verifica se é um redirecionamento direto
                 if (isset($route['options']['redirect'])) {
-                    header("Location: " . $route['options']['redirect'], true, $route['options']['status'] ?? 301);
+                    header('Location: ' . $route['options']['redirect'], true, $route['options']['status'] ?? 301);
                     exit;
                 }
-                
-                // Extração segura do controller e action
+
                 if (is_string($route['action']) && strpos($route['action'], '@') !== false) {
                     [$controller, $action] = explode('@', $route['action']);
                 } else {
-                    // Caso você use callables/closures futuramente
-                    continue; 
+                    continue;
                 }
 
-                $class = str_replace('/', '\\', "App\Controllers\\" . $controller);
-                // Verificação de existência da classe e método
+                $class = str_replace('/', '\\', 'App\\Controllers\\' . $controller);
                 if (class_exists($class)) {
                     $controllerInstance = new $class();
 
                     if (method_exists($controllerInstance, $action)) {
                         $controllerInstance->$action($params);
-                        return; // Rota executada com sucesso
-                    } else {
-                        self::handleActionMethodNotFound();
                         return;
                     }
-                } else {
-                    // Fallback para controllers do sistema
-                    $controllerFallback = self::$prefixController . $_ENV['DEFAULT_SYSTEM_CONTENT'] . '\\' . str_replace('/', '\\', $controller);
-                    
-                    if (class_exists($controllerFallback)) {
-                        $controllerInstance = new $controllerFallback();
-                        if (method_exists($controllerInstance, $action)) {
-                            $controllerInstance->$action($params);
-                            return;
-                        }
-                    }
-                    
-                    self::handleControllerNotFound();
+
+                    self::handleActionMethodNotFound();
                     return;
+                }
+
+                $controllerFallback = self::$prefixController . Config::get('routing.default_system_content', 'App') . '\\' . str_replace('/', '\\', $controller);
+
+                if (class_exists($controllerFallback)) {
+                    $controllerInstance = new $controllerFallback();
+                    if (method_exists($controllerInstance, $action)) {
+                        $controllerInstance->$action($params);
+                        return;
+                    }
+                }
+
+                self::handleControllerNotFound();
+                return;
+            }
+        }
+
+        if (!$routeFound && self::pathExistsForDifferentMethod($routes, $url, $method)) {
+            self::handleMethodNotAllowed($routes, $url);
+            return;
+        }
+
+        if (!$routeFound) {
+            self::handleNotFound($controllerBaseNamespace);
+        }
+    }
+
+    private static function pathExistsForDifferentMethod(array $routes, string $url, string $currentMethod): bool
+    {
+        foreach ($routes as $method => $methodRoutes) {
+            if ($method === $currentMethod) {
+                continue;
+            }
+
+            foreach ($methodRoutes as $route) {
+                if (self::matchRoute($route, $url) !== null) {
+                    return true;
                 }
             }
         }
 
-        // Se não encontrou nenhuma rota compatível para o método informado
-        if (!$routeFound) {
-            self::handleNotFound($controllerBaseNamespace);
-        }
+        return false;
     }
 
     private static function handleNotFound(string $controllerBaseNamespace): void
@@ -135,7 +148,7 @@ class Core
         $controller = $controllerBaseNamespace . self::$templateController . '\\NotFoundController';
 
         if (!class_exists($controller)) {
-            $controller = self::$prefixController . ucfirst($_ENV['DEFAULT_SYSTEM_CONTENT']) . '\\' . self::$templateController .'\\NotFoundController';
+            $controller = self::$prefixController . ucfirst(Config::get('routing.default_system_content', 'App')) . '\\' . self::$templateController . '\\NotFoundController';
         }
 
         $controllerInstance = new $controller();
@@ -144,40 +157,57 @@ class Core
 
     public static function getSubdomainHost(): string
     {
-        $host       = filter_var($_SERVER['HTTP_HOST'] ?? '', FILTER_SANITIZE_URL);
-        $domain     = filter_var($_SERVER['DEFAULT_DOMINIO'] ?? ($_ENV['DEFAULT_DOMINIO'] ?? ''), FILTER_SANITIZE_URL);
-        $host       = preg_replace('/^www./', '', $host);
-        $domain     = preg_replace('/^www./', '', $domain);
+        $host = filter_var($_SERVER['HTTP_HOST'] ?? '', FILTER_SANITIZE_URL);
+        $domain = filter_var($_SERVER['DEFAULT_DOMINIO'] ?? Config::get('app.domain', ''), FILTER_SANITIZE_URL);
+        $host = preg_replace('/^www./', '', $host);
+        $domain = preg_replace('/^www./', '', $domain);
 
         $host = str_replace('.' . $domain, '', $host);
 
-        return ($host == $domain) ? "{$_ENV['DEFAULT_SYSTEM_CONTENT']}/" : "{$host}/";
+        return ($host == $domain) ? Config::get('routing.default_system_content', 'App') . '/' : "{$host}/";
     }
 
-    private static function handleMethodNotAllowed(): void
+    private static function handleMethodNotAllowed(array $routes, string $url): void
     {
+        $allowedMethods = [];
+
+        foreach ($routes as $method => $methodRoutes) {
+            foreach ($methodRoutes as $route) {
+                if (self::matchRoute($route, $url) !== null) {
+                    $allowedMethods[] = $method;
+                    break;
+                }
+            }
+        }
+
+        $allowedMethods = array_values(array_unique($allowedMethods));
+        if (!empty($allowedMethods)) {
+            header('Allow: ' . implode(', ', $allowedMethods));
+        }
+
         Response::json([
-            "success" => false,
-            "error" => true,
-            "message" => "Method not allowed"
+            'success' => false,
+            'error' => true,
+            'message' => 'Method not allowed',
+            'allowed_methods' => $allowedMethods,
         ], 405);
     }
 
     private static function handleControllerNotFound(): void
     {
         Response::json([
-            "success" => false,
-            "error" => true,
-            "message" => "Controller not found"
+            'success' => false,
+            'error' => true,
+            'message' => 'Controller not found',
         ], 404);
     }
 
     private static function handleActionMethodNotFound(): void
     {
         Response::json([
-            "success" => false,
-            "error" => true,
-            "message" => "Action not found"
+            'success' => false,
+            'error' => true,
+            'message' => 'Action not found',
         ], 404);
     }
 }

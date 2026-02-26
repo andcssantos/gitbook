@@ -1,45 +1,38 @@
 <?php
 
-	# | -------------------------
-	# | Init sessions
-	# | -------------------------
-	if (session_status() === PHP_SESSION_NONE) {
-		session_start();
-	}
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-	# | -------------------------
-	# | Init autoload
-	# | -------------------------
-	require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__ . '/../vendor/autoload.php';
 
-	use App\Core\Core;
-	use App\Http\Route;
-	use App\Utils\Construct\{GenJwt};
-	use App\Utils\Functions\Layout;
+use App\Core\Core;
+use App\Core\ErrorHandler;
+use App\Http\Route;
+use App\Utils\Config;
+use App\Utils\Construct\GenJwt;
+use App\Utils\Functions\Layout;
 
-	# | -------------------------
-	# | Load .env file
-	# | -------------------------
-	$dotenv  = Dotenv\Dotenv::createImmutable(__DIR__ . '/../', '.env');
-	$dotenv->load();
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/../', '.env');
+$dotenv->safeLoad();
 
-	# | -------------------------
-	# | Init TimeZone
-	# | -------------------------
-	date_default_timezone_set($_ENV['APP_TIMEZONE']);
+Config::load(__DIR__ . '/..');
+ErrorHandler::register();
 
-	# | -------------------------
-	# | Init Class Hub
-	# | -------------------------
-	require_once __DIR__ . "/../src/routes/".Layout::getSubdomainHost()."_main.php";
+date_default_timezone_set(Config::get('app.timezone', 'UTC'));
 
-	# | -------------------------
-	# | JWT Validation
-	# | -------------------------
-	$jwt  = new GenJwt;
-	$jwt->validateJwt();
+$routeCacheFile = Config::get('routing.route_cache_file', __DIR__ . '/cache/routes.php');
+$routeCacheEnabled = filter_var($_ENV['APP_ROUTE_CACHE'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
-	# | -------------------------
-	# | Dispatch
-	# | -------------------------
-	Core::dispatch(Route::routes());
+if (!$routeCacheEnabled || !Route::loadFromFile($routeCacheFile)) {
+    require_once __DIR__ . '/../src/routes/' . Layout::getSubdomainHost() . '_main.php';
+
+    if ($routeCacheEnabled) {
+        Route::cacheToFile($routeCacheFile);
+    }
+}
+
+$jwt = new GenJwt();
+$jwt->validateJwt();
+
+Core::dispatch(Route::routes());
