@@ -70,7 +70,9 @@ class Response
         }
 
         if ($this->content !== null) {
-            if ($this->headers['Content-Type'] === self::CONTENT_TYPE_JSON) {
+            $contentType = $this->headers['Content-Type'] ?? null;
+
+            if ($contentType === self::CONTENT_TYPE_JSON) {
                 echo json_encode($this->content, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
             } else {
                 echo $this->content;
