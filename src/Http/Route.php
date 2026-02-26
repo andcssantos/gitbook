@@ -257,4 +257,34 @@ class Route
     {
         foreach (self::$routes as &$m) $m = [];
     }
+
+    public static function cacheToFile(string $filePath): void
+    {
+        $dir = dirname($filePath);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        $export = var_export(self::$routes, true);
+        file_put_contents($filePath, "<?php
+
+return " . $export . ";
+");
+    }
+
+    public static function loadFromFile(string $filePath): bool
+    {
+        if (!file_exists($filePath)) {
+            return false;
+        }
+
+        $routes = require $filePath;
+        if (!is_array($routes)) {
+            return false;
+        }
+
+        self::$routes = $routes;
+        return true;
+    }
+
 }

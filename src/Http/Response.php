@@ -72,7 +72,7 @@ class Response
         if ($this->content !== null) {
             $contentType = $this->headers['Content-Type'] ?? null;
 
-            if ($contentType === self::CONTENT_TYPE_JSON) {
+            if (is_string($contentType) && str_starts_with(strtolower($contentType), self::CONTENT_TYPE_JSON)) {
                 echo json_encode($this->content, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
             } else {
                 echo $this->content;
@@ -148,7 +148,7 @@ class Response
      * Response::file('/caminho/para/arquivo.pdf', 'meu-arquivo.pdf');
      *
      */
-    public static function file(string $filePath, string $fileName = 'null'): void
+    public static function file(string $filePath, ?string $fileName = null): void
     {
         if (!file_exists($filePath)) {
             throw new InvalidArgumentException("Arquivo não encontrado: $filePath");
@@ -156,13 +156,18 @@ class Response
 
         $fileName = $fileName ?? basename($filePath);
 
-        (new self())
-            ->setStatusCode(200)
-            ->addHeader('Content-Type', self::CONTENT_TYPE_OCTET_STREAM)
-            ->addHeader('Content-Disposition', 'attachment; filename="' . $fileName . '"')
-            ->addHeader('Content-Length', (string)filesize($filePath))
-            ->setContent(file_get_contents($filePath))
-            ->send();
+        http_response_code(200);
+        header('Content-Type: ' . self::CONTENT_TYPE_OCTET_STREAM);
+        header('Content-Disposition: attachment; filename="' . $fileName . '"');
+        header('Content-Length: ' . filesize($filePath));
+
+        $stream = fopen($filePath, 'rb');
+        if ($stream === false) {
+            throw new InvalidArgumentException("Não foi possível abrir o arquivo: $filePath");
+        }
+
+        fpassthru($stream);
+        fclose($stream);
     }
 
     /**
