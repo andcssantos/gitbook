@@ -1,0 +1,56 @@
+{
+    "name": "inventory",
+    "version": "1.0.0",
+    "description": "Inventario autenticado do Evolvaxe",
+    "lang": "pt-BR",
+    "charset": "UTF-8",
+    "type": "page",
+    "layout": "dashboard",
+    "auth": true,
+    "cache": {
+        "html": 0,
+        "assets": 86400,
+        "preload": true
+    },
+    "seo": {
+        "title": "Evolvaxe | Inventario",
+        "description": "Modulo de inventario do Evolvaxe",
+        "meta": [
+            {
+                "name": "robots",
+                "content": "noindex, nofollow"
+            }
+        ]
+    },
+    "assets": {
+        "css": [],
+        "js": [],
+        "preload": [],
+        "prefetch": []
+    },
+    "dependencies": {
+        "libs": {
+            "css": [
+                "assets/vendor/gridstack/gridstack.min.css",
+                "assets/vendor/tippy/tippy.css",
+                "assets/vendor/tippy/translucent.css"
+            ],
+            "js": [
+                {
+                    "src": "assets/vendor/gridstack/gridstack-all.js",
+                    "defer": true
+                },
+                {
+                    "src": "assets/vendor/tippy/popper.min.js",
+                    "defer": true
+                },
+                {
+                    "src": "assets/vendor/tippy/tippy-bundle.umd.min.js",
+                    "defer": true
+                }
+            ]
+        },
+        "modules": []
+    },
+    "data": {}
+}

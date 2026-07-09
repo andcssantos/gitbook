@@ -26,6 +26,34 @@ class ContainerInstanceRepository
         return is_array($row) ? $row : null;
     }
 
+    public function findByPublicIdAndOwner(string $publicId, int $playerId, bool $lock = false): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT ci.*, cd.code AS definition_code, cd.container_type, cd.allow_container_items
+            FROM container_instances ci
+            INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id
+            WHERE ci.public_id = :public_id AND ci.owner_player_id = :player_id AND ci.status = :status
+            LIMIT 1' . $this->lockClause($lock));
+        $stmt->execute([
+            'public_id' => $publicId,
+            'player_id' => $playerId,
+            'status' => 'active',
+        ]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
+    public function findByPublicId(string $publicId): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT * FROM container_instances WHERE public_id = :public_id LIMIT 1');
+        $stmt->execute(['public_id' => $publicId]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
     public function create(array $data): int
     {
         $payload = array_merge([
@@ -75,5 +103,10 @@ class ContainerInstanceRepository
     private function pdo(): PDO
     {
         return $this->pdo ?? DB::pdo();
+    }
+
+    private function lockClause(bool $lock): string
+    {
+        return $lock && $this->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
     }
 }

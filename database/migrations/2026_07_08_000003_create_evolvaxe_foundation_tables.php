@@ -15,6 +15,7 @@ return new class {
     {
         foreach ([
             'player_equipment',
+            'container_acceptance_rules',
             'container_items',
             'container_instances',
             'container_definitions',
@@ -314,6 +315,22 @@ return new class {
             CHECK (grid_h >= 1)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
 
+        $pdo->exec("CREATE TABLE IF NOT EXISTS container_acceptance_rules (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            container_definition_id BIGINT UNSIGNED NOT NULL,
+            rule_type VARCHAR(40) NOT NULL,
+            reference_code VARCHAR(80) NOT NULL DEFAULT '',
+            allow TINYINT(1) NOT NULL DEFAULT 1,
+            priority INT NOT NULL DEFAULT 100,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_container_acceptance_rule (container_definition_id, rule_type, reference_code),
+            KEY idx_container_acceptance_container_priority (container_definition_id, priority),
+            KEY idx_container_acceptance_type_reference (rule_type, reference_code),
+            CONSTRAINT fk_container_acceptance_definition FOREIGN KEY (container_definition_id) REFERENCES container_definitions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
         $pdo->exec("CREATE TABLE IF NOT EXISTS player_equipment (
             player_id BIGINT UNSIGNED NOT NULL,
             equipment_slot_id BIGINT UNSIGNED NOT NULL,
@@ -535,6 +552,21 @@ return new class {
         )");
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_container_items_container_position ON container_items(container_instance_id, grid_y, grid_x)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_container_items_placement_version ON container_items(placement_version)');
+
+        $pdo->exec("CREATE TABLE IF NOT EXISTS container_acceptance_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            container_definition_id INTEGER NOT NULL,
+            rule_type TEXT NOT NULL,
+            reference_code TEXT NOT NULL DEFAULT '',
+            allow INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 100,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NULL,
+            UNIQUE (container_definition_id, rule_type, reference_code),
+            FOREIGN KEY (container_definition_id) REFERENCES container_definitions(id) ON DELETE CASCADE
+        )");
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_container_acceptance_container_priority ON container_acceptance_rules(container_definition_id, priority)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_container_acceptance_type_reference ON container_acceptance_rules(rule_type, reference_code)');
 
         $pdo->exec("CREATE TABLE IF NOT EXISTS player_equipment (
             player_id INTEGER NOT NULL,

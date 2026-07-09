@@ -1,0 +1,219 @@
+:root {
+    --inventory-bg: #111318;
+    --inventory-panel: #191d24;
+    --inventory-panel-strong: #222832;
+    --inventory-line: #343c49;
+    --inventory-muted: #9aa6b5;
+    --inventory-text: #eef2f6;
+    --inventory-accent: #55c58a;
+    --inventory-warn: #d9a441;
+    --inventory-cell: 44px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--inventory-bg);
+    color: var(--inventory-text);
+    font-family: Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.inventory-page {
+    min-height: 100vh;
+    padding: 24px;
+}
+
+.inventory-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    max-width: 1360px;
+    margin: 0 auto 20px;
+}
+
+.inventory-kicker {
+    margin: 0 0 4px;
+    color: var(--inventory-accent);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+.inventory-header h1 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1.15;
+}
+
+.inventory-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.inventory-status {
+    min-width: 150px;
+    color: var(--inventory-muted);
+    font-size: 14px;
+    text-align: right;
+}
+
+.inventory-button {
+    min-height: 38px;
+    padding: 0 14px;
+    border: 1px solid #4a5565;
+    border-radius: 6px;
+    background: #262d38;
+    color: var(--inventory-text);
+    font: inherit;
+    cursor: pointer;
+}
+
+.inventory-button:hover,
+.inventory-button:focus-visible {
+    border-color: var(--inventory-accent);
+    outline: none;
+}
+
+.inventory-layout {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+    gap: 18px;
+    max-width: 1360px;
+    margin: 0 auto;
+}
+
+.inventory-container {
+    overflow: hidden;
+    border: 1px solid var(--inventory-line);
+    border-radius: 8px;
+    background: var(--inventory-panel);
+}
+
+.inventory-container-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--inventory-line);
+    background: var(--inventory-panel-strong);
+}
+
+.inventory-container-title {
+    min-width: 0;
+}
+
+.inventory-container-title h2 {
+    overflow: hidden;
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inventory-container-title p,
+.inventory-container-meta {
+    margin: 4px 0 0;
+    color: var(--inventory-muted);
+    font-size: 12px;
+}
+
+.inventory-container-meta {
+    flex: 0 0 auto;
+    margin: 0;
+    color: var(--inventory-warn);
+}
+
+.inventory-grid-wrap {
+    overflow: auto;
+    padding: 12px;
+}
+
+.grid-stack.inventory-grid {
+    min-width: calc(var(--inventory-columns, 8) * var(--inventory-cell));
+    width: calc(var(--inventory-columns, 8) * var(--inventory-cell));
+    min-height: calc(var(--inventory-rows, 5) * var(--inventory-cell));
+    background-color: #10141a;
+    background-image:
+        linear-gradient(to right, rgba(255,255,255,.08) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,.08) 1px, transparent 1px);
+    background-size: var(--inventory-cell) var(--inventory-cell);
+}
+
+.grid-stack > .grid-stack-item > .grid-stack-item-content {
+    inset: 3px;
+    overflow: hidden;
+    border: 1px solid rgba(85, 197, 138, .5);
+    border-radius: 6px;
+    background: #253040;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+    cursor: grab;
+    user-select: none;
+}
+
+.grid-stack > .grid-stack-item.ui-draggable-dragging > .grid-stack-item-content {
+    cursor: grabbing;
+}
+
+.inventory-item {
+    display: grid;
+    align-content: space-between;
+    height: 100%;
+    padding: 8px;
+    color: #f8fafc;
+}
+
+.inventory-item-name {
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inventory-item-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    color: #cbd5e1;
+    font-size: 11px;
+}
+
+.inventory-empty {
+    padding: 18px;
+    color: var(--inventory-muted);
+    font-size: 14px;
+}
+
+@media (max-width: 720px) {
+    .inventory-page {
+        padding: 16px;
+    }
+
+    .inventory-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .inventory-actions {
+        justify-content: space-between;
+        width: 100%;
+    }
+
+    .inventory-status {
+        text-align: left;
+    }
+}

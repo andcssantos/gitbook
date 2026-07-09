@@ -38,19 +38,25 @@ class Template
         self::enforceManifest(self::$definition);
 
         $htmlTtl = (int) (self::$definition->manifest->cache['html'] ?? 0);
-        if ($htmlTtl > 0 && !(bool) (self::$definition->manifest->security['auth'] ?? false) && !self::checkAuth()) {
+        $templatePath = self::getTemplatePath(self::determineRouteTemplate(), self::$currentDomain);
+        if (
+            $htmlTtl > 0
+            && !(bool) (self::$definition->manifest->security['auth'] ?? false)
+            && !self::checkAuth()
+            && !self::templateUsesCsrf($templatePath)
+        ) {
             $cache = new \App\Utils\Functions\CacheManager('modules/html', $htmlTtl);
             $manifestMtime = is_file(self::$definition->manifestPath) ? (string) filemtime(self::$definition->manifestPath) : 'missing';
             echo $cache->remember(
                 'html:' . self::$definition->id() . ':' . md5((string) filemtime(self::$definition->contentPath) . $manifestMtime),
-                fn (): string => self::renderTemplateToString(self::getTemplatePath(self::determineRouteTemplate(), self::$currentDomain)),
+                fn (): string => self::renderTemplateToString($templatePath),
                 $htmlTtl,
                 ['tags' => ['modules', 'module_html', 'module:' . self::$definition->id()]]
             );
             return;
         }
 
-        self::renderTemplate(self::getTemplatePath(self::determineRouteTemplate(), self::$currentDomain));
+        self::renderTemplate($templatePath);
     }
 
     public static function loadContent(): void
@@ -298,7 +304,18 @@ class Template
             return null;
         }
 
+        if (str_starts_with($asset, 'assets/')) {
+            return $asset;
+        }
+
         return trim((string) Config::get('modules.libs_base_url', 'assets/libs'), '/') . '/' . $asset;
+    }
+
+    private static function templateUsesCsrf(string $templatePath): bool
+    {
+        $contents = is_file($templatePath) ? file_get_contents($templatePath) : false;
+
+        return is_string($contents) && str_contains($contents, 'csrf_token()');
     }
 
     private static function getPage(string $page): string

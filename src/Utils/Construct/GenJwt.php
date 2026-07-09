@@ -114,7 +114,6 @@ class GenJwt
         $token = $token ?? $_COOKIE['token'] ?? $this->getBearerToken();
 
         if (!$token) {
-            $this->destroyJwt();
             return false;
         }
 

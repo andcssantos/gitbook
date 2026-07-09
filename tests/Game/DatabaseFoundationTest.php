@@ -79,6 +79,28 @@ class DatabaseFoundationTest extends TestCase
         }
     }
 
+    public function testContainerAcceptanceRulesAreSeeded(): void
+    {
+        $this->assertTrue($this->tableExists('container_acceptance_rules'));
+
+        $rules = (int) $this->pdo->query('SELECT COUNT(*) FROM container_acceptance_rules')->fetchColumn();
+        $this->assertGreaterThan(0, $rules);
+
+        $mainInventoryId = $this->id('container_definitions', 'main_inventory_level_1');
+        $stmt = $this->pdo->prepare('SELECT rule_type FROM container_acceptance_rules WHERE container_definition_id = :container_definition_id ORDER BY priority ASC');
+        $stmt->execute(['container_definition_id' => $mainInventoryId]);
+
+        $this->assertContains('CONTAINER_BLOCK', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'rule_type'));
+    }
+
+    public function testContainerAcceptanceRulesDoNotStorePixelCoordinates(): void
+    {
+        foreach ($this->columns('container_acceptance_rules') as $column) {
+            $this->assertStringNotContainsString('pixel', strtolower($column));
+            $this->assertStringNotContainsString('px', strtolower($column));
+        }
+    }
+
     public function testUniqueItemInstanceCannotBePlacedInTwoContainers(): void
     {
         $this->createPlayerFixture();

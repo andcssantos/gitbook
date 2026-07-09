@@ -113,11 +113,21 @@ class ModuleValidator
         $asset = trim($asset);
         $external = (bool) preg_match('/^https?:\/\//i', $asset);
         $base = trim((string) Config::get('modules.libs_base_url', 'assets/libs'), '/');
+        $relative = ltrim(str_replace('\\', '/', $asset), '/');
+
+        if (!$external && str_starts_with($relative, 'assets/')) {
+            return [
+                'path' => $asset,
+                'relative' => $relative,
+                'absolute' => __DIR__ . '/../../public/' . $relative,
+                'external' => false,
+            ];
+        }
 
         return [
             'path' => $asset,
-            'relative' => $external ? $asset : "{$base}/" . ltrim($asset, '/'),
-            'absolute' => __DIR__ . '/../../public/' . $base . '/' . ltrim($asset, '/'),
+            'relative' => $external ? $asset : "{$base}/{$relative}",
+            'absolute' => __DIR__ . '/../../public/' . $base . '/' . $relative,
             'external' => $external,
         ];
     }

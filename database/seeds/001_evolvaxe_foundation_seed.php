@@ -117,6 +117,49 @@ return function (PDO $pdo): void {
         ]);
     }
 
+    $containerDefinitionId = fn (string $code): int => (int) $pdo->query("SELECT id FROM container_definitions WHERE code = " . $pdo->quote($code))->fetchColumn();
+    $upsertAcceptanceRule = function (string $containerCode, string $ruleType, string $referenceCode, bool $allow, int $priority) use ($pdo, $containerDefinitionId): void {
+        $definitionId = $containerDefinitionId($containerCode);
+        $referenceCode = trim($referenceCode);
+
+        $existing = $pdo->prepare('SELECT id FROM container_acceptance_rules WHERE container_definition_id = :container_definition_id AND rule_type = :rule_type AND reference_code = :reference_code LIMIT 1');
+        $existing->execute([
+            'container_definition_id' => $definitionId,
+            'rule_type' => $ruleType,
+            'reference_code' => $referenceCode,
+        ]);
+        $id = $existing->fetchColumn();
+
+        if ($id) {
+            $stmt = $pdo->prepare('UPDATE container_acceptance_rules SET allow = :allow, priority = :priority WHERE id = :id');
+            $stmt->execute([
+                'id' => $id,
+                'allow' => $allow ? 1 : 0,
+                'priority' => $priority,
+            ]);
+            return;
+        }
+
+        $stmt = $pdo->prepare('INSERT INTO container_acceptance_rules (container_definition_id, rule_type, reference_code, allow, priority) VALUES (:container_definition_id, :rule_type, :reference_code, :allow, :priority)');
+        $stmt->execute([
+            'container_definition_id' => $definitionId,
+            'rule_type' => $ruleType,
+            'reference_code' => $referenceCode,
+            'allow' => $allow ? 1 : 0,
+            'priority' => $priority,
+        ]);
+    };
+
+    foreach (['main_inventory_level_1', 'small_backpack', 'medium_backpack', 'wooden_chest', 'market_delivery', 'market_escrow'] as $containerCode) {
+        $upsertAcceptanceRule($containerCode, 'CONTAINER_BLOCK', '', false, 10);
+        $upsertAcceptanceRule($containerCode, 'ACCEPT_ALL', '', true, 100);
+    }
+
+    $upsertAcceptanceRule('expedition_carry', 'CONTAINER_BLOCK', '', false, 10);
+    foreach (['material', 'currency', 'tool'] as $categoryCode) {
+        $upsertAcceptanceRule('expedition_carry', 'ITEM_CATEGORY', $categoryCode, true, 100);
+    }
+
     $categoryId = fn (string $code): int => (int) $pdo->query("SELECT id FROM item_categories WHERE code = " . $pdo->quote($code))->fetchColumn();
     $familyId = fn (string $code): int => (int) $pdo->query("SELECT id FROM material_families WHERE code = " . $pdo->quote($code))->fetchColumn();
 
