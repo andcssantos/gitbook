@@ -1,7 +1,5 @@
 <?php
 
-use PDO;
-
 return new class {
     public function up(PDO $pdo): void
     {
@@ -12,9 +10,9 @@ return new class {
             request_hash CHAR(64) NOT NULL,
             status VARCHAR(20) NOT NULL DEFAULT 'processing',
             response_payload LONGTEXT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP NULL,
-            expires_at TIMESTAMP NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME NULL,
+            expires_at DATETIME NOT NULL,
             UNIQUE KEY uniq_idempotency_scope_key (scope, key_hash),
             KEY idx_idempotency_expires_at (expires_at),
             KEY idx_idempotency_status (status)

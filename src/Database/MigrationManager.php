@@ -155,7 +155,7 @@ class MigrationManager
 
         try {
             $callback();
-            if ($started) {
+            if ($started && $this->pdo->inTransaction()) {
                 $this->pdo->commit();
             }
         } catch (\Throwable $e) {

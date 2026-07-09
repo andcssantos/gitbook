@@ -30,4 +30,28 @@ class ApiRouteTest extends TestCase
             'audit:api.example.action',
         ], $route['options']['middleware']);
     }
+
+    public function testAuthRoutesUseExpectedMiddlewareStack(): void
+    {
+        require __DIR__ . '/../../src/routes/app/api/RoutesAuth.php';
+
+        $routes = Route::routes();
+
+        $this->assertSame([
+            'csrf',
+            'rateLimit:10,60',
+            'validate:email=required|email|max:160,password=required|string|min:8|max:255',
+            'audit:auth.login',
+        ], $routes['POST']['/api/auth/login']['options']['middleware']);
+
+        $this->assertSame([
+            'auth',
+            'csrf',
+            'audit:auth.logout',
+        ], $routes['POST']['/api/auth/logout']['options']['middleware']);
+
+        $this->assertSame([
+            'auth',
+        ], $routes['GET']['/api/auth/me']['options']['middleware']);
+    }
 }

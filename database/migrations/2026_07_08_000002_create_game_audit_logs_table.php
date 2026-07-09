@@ -1,7 +1,5 @@
 <?php
 
-use PDO;
-
 return new class {
     public function up(PDO $pdo): void
     {
@@ -13,7 +11,7 @@ return new class {
             method VARCHAR(12) NOT NULL,
             path VARCHAR(255) NOT NULL,
             context_json JSON NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             KEY idx_game_audit_action_created (action, created_at),
             KEY idx_game_audit_actor_created (actor, created_at),
             KEY idx_game_audit_ip_created (ip, created_at)
