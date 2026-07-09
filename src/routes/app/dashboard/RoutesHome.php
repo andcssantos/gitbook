@@ -6,7 +6,7 @@ use App\Http\Route;
 # |  Routes Dashboard                     | #
 # | ************************************* | #
 
-Route::group(['prefix' => '/dashboard'], function (): void {
+Route::group(['prefix' => '/dashboard', 'middleware' => ['auth']], function (): void {
     $controller = 'App/Dashboard/HomeController';
 
     Route::get('/', "{$controller}@index", ['as' => 'dashboard.home']);

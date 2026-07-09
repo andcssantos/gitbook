@@ -96,6 +96,22 @@ class Response
             ->send();
     }
 
+    public static function cachedJson(mixed $data = [], int $ttl = 60, int $status = 200, array $headers = []): void
+    {
+        $body = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $etag = '"' . hash('sha256', $body === false ? '' : $body) . '"';
+
+        header('ETag: ' . $etag);
+        header('Cache-Control: private, max-age=' . max(0, $ttl));
+
+        if (($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag) {
+            http_response_code(304);
+            return;
+        }
+
+        self::json($data, $status, $headers);
+    }
+
     /**
      * Retorna uma resposta HTML.
      *
@@ -154,11 +170,11 @@ class Response
             throw new InvalidArgumentException("Arquivo não encontrado: $filePath");
         }
 
-        $fileName = $fileName ?? basename($filePath);
+        $fileName = basename(str_replace(["\r", "\n"], '', $fileName ?? basename($filePath)));
 
         http_response_code(200);
         header('Content-Type: ' . self::CONTENT_TYPE_OCTET_STREAM);
-        header('Content-Disposition: attachment; filename="' . $fileName . '"');
+        header('Content-Disposition: attachment; filename="' . addslashes($fileName) . '"');
         header('Content-Length: ' . filesize($filePath));
 
         $stream = fopen($filePath, 'rb');

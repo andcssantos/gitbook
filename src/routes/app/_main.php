@@ -36,18 +36,20 @@ function loadRouteFiles(array $files): void
 /**
  * Centraliza os contextos de rotas por estado da aplicação.
  */
-function loadContextRoutes(bool $isAuthenticated): void
+function loadContextRoutes(): void
 {
     $contexts = [
         'website' => __DIR__ . '/website',
         'dashboard' => __DIR__ . '/dashboard',
+        'api' => __DIR__ . '/api',
     ];
 
-    $selectedContext = $isAuthenticated ? 'dashboard' : 'website';
-    loadRouteFiles(getRouteFiles($contexts[$selectedContext]));
+    foreach ($contexts as $directory) {
+        loadRouteFiles(getRouteFiles($directory));
+    }
 }
 
-loadContextRoutes(isset($_SESSION['user']));
+loadContextRoutes();
 
 // Rotas globais (válidas para qualquer contexto)
 require_once __DIR__ . '/joker/RoutesJoker.php';

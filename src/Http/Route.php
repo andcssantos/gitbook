@@ -4,100 +4,47 @@ namespace App\Http;
 
 class Route
 {
-    private static $routes = [
-        'GET'    => [],
-        'POST'   => [],
-        'PUT'    => [],
+    private static array $routes = [
+        'GET' => [],
+        'POST' => [],
+        'PUT' => [],
         'DELETE' => [],
-        'PATCH'  => [],
-        'HEAD'   => []
+        'PATCH' => [],
+        'HEAD' => [],
     ];
 
-    /**
-     * Registra uma rota do tipo GET.
-     *
-     * @param string $path
-     * @param string|callable $action
-     * @param array $options
-     * @return void
-     */
+    private static array $groupStack = [];
+
     public static function get(string $path, $action, array $options = []): void
     {
         self::addRoute('GET', $path, $action, $options);
     }
 
-    /**
-     * Registra uma rota do tipo POST.
-     *
-     * @param string $path
-     * @param string|callable $action
-     * @param array $options
-     * @return void
-     */
     public static function post(string $path, $action, array $options = []): void
     {
         self::addRoute('POST', $path, $action, $options);
     }
 
-    /**
-     * Registra uma rota do tipo PUT.
-     *
-     * @param string $path
-     * @param string|callable $action
-     * @param array $options
-     * @return void
-     */
     public static function put(string $path, $action, array $options = []): void
     {
         self::addRoute('PUT', $path, $action, $options);
     }
 
-    /**
-     * Registra uma rota do tipo DELETE.
-     *
-     * @param string $path
-     * @param string|callable $action
-     * @param array $options
-     * @return void
-     */
     public static function delete(string $path, $action, array $options = []): void
     {
         self::addRoute('DELETE', $path, $action, $options);
     }
 
-    /**
-     * Registra uma rota do tipo PATCH.
-     *
-     * @param string $path
-     * @param string|callable $action
-     * @param array $options
-     * @return void
-     */
     public static function patch(string $path, $action, array $options = []): void
     {
         self::addRoute('PATCH', $path, $action, $options);
     }
 
-    /**
-     * Registra uma rota para o verbo HEAD.
-     *
-     * @param string $path
-     * @param string $action
-     * @param array $options
-     */
     public static function head(string $path, string $action, array $options = []): void
     {
         self::addRoute('HEAD', $path, $action, $options);
     }
 
-    /**
-     * Registra uma rota para múltiplos métodos HTTP.
-     *
-     * @param string $path
-     * @param string|callable $action
-     * @param array $options
-     * @return void
-     */
     public static function any(string $path, $action, array $options = []): void
     {
         foreach (['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] as $method) {
@@ -105,30 +52,18 @@ class Route
         }
     }
 
-    /**
-     * Registra uma rota para múltiplos métodos.
-     * Route::match(['GET', 'POST'], '/search', 'SearchController@results');
-     */
     public static function match(array $methods, string $path, $action, array $options = []): void
     {
         foreach ($methods as $method) {
-            self::addRoute(strtoupper($method), $path, $action, $options);
+            self::addRoute(strtoupper((string) $method), $path, $action, $options);
         }
     }
 
-    /**
-     * Registra uma rota de redirecionamento direto.
-     * Route::redirect('/login-antigo', '/login')
-     */
     public static function redirect(string $from, string $to, int $status = 301): void
     {
         self::addRoute('GET', $from, null, ['redirect' => $to, 'status' => $status]);
     }
 
-    /**
-     * Registra um conjunto de rotas para CRUD (Resource).
-     * Route::resource('capitulo', 'ChapterController');
-     */
     public static function resource(string $path, string $controller, array $options = []): void
     {
         $path = trim($path, '/');
@@ -143,100 +78,43 @@ class Route
         self::delete("/$path/{id:int}", "$controller@destroy", array_merge($options, ['as' => "$name.destroy"]));
     }
 
-    /**
-     * Método group :: Permite agrupar rotas que compartilham os mesmos atributos (como prefixos de URL ou middleware).
-     * Exemplo:
-     *
-     *  Route::group(['prefix' => 'admin'], function () {
-     *      Route::post('/register', 'AdminController@register');
-     *  });
-     *
-     * No ajax será chamado: '/admin/register'
-     */
     public static function group(array $attributes, callable $callback): void
     {
-        $prefix = isset($attributes['prefix']) ? '/' . trim($attributes['prefix'], '/') : '';
-        $middleware = (array) ($attributes['middleware'] ?? []);
+        self::$groupStack[] = [
+            'prefix' => isset($attributes['prefix']) ? '/' . trim((string) $attributes['prefix'], '/') : '',
+            'middleware' => (array) ($attributes['middleware'] ?? []),
+        ];
 
-        // Snapshot do estado atual para identificar novas rotas
-        $beforeGroup = self::$routes;
-
-        $callback();
-
-        // Itera sobre todos os verbos para aplicar as transformações do grupo
-        foreach (self::$routes as $method => &$methodRoutes) {
-            $oldKeys = array_keys($beforeGroup[$method]);
-            
-            foreach ($methodRoutes as $path => &$details) {
-                // Se a rota foi adicionada durante a execução do callback
-                if (!in_array($path, $oldKeys)) {
-                    $newPath = rtrim($prefix, '/') . '/' . ltrim($path, '/');
-                    $newPath = ($newPath === '') ? '/' : $newPath;
-
-                    // Atualiza o path e anexa middlewares
-                    $details['path'] = $newPath;
-                    $details['options']['middleware'] = array_merge(
-                        (array) ($details['options']['middleware'] ?? []),
-                        $middleware
-                    );
-
-                    // Reindexa a rota se o path mudou
-                    if ($newPath !== $path) {
-                        $methodRoutes[$newPath] = $details;
-                        unset($methodRoutes[$path]);
-                    }
-                }
-            }
+        try {
+            $callback();
+        } finally {
+            array_pop(self::$groupStack);
         }
     }
 
-    /**
-     * Método para definir uma rota qualquer (usado internamente)
-     */
     public static function url(string $name, array $params = []): string
     {
         foreach (self::$routes as $method) {
             foreach ($method as $route) {
-                // Buscamos em 'name', que é onde o addRoute salvou
                 if (isset($route['name']) && $route['name'] === $name) {
-                    $path = $route['path'];
-                    // Futuramente, aqui você pode usar os $params para substituir {id}
-                    return $path;
+                    return self::replaceParams($route['path'], $params);
                 }
             }
         }
+
         return '';
     }
 
-    /**
-     * Busca uma rota específica.
-     */
-    private static function addRoute(string $method, string $path, $action, array $options = [])
-    {
-        $path = '/' . trim($path, '/');
-        
-        // Se a opção 'as' (nome da rota) existir, guardamos para busca posterior
-        self::$routes[strtoupper($method)][$path] = [
-            'method'    => strtoupper($method),
-            'path'      => $path,
-            'action'    => $action,
-            'options'   => $options,
-            'name'      => $options['as'] ?? null 
-        ];
-    }
-
-    /**
-     * Route::get('/dashboard/perfil/configuracoes', 'UserController@settings', ['as' => 'user.settings']);
-     */
     public static function name(string $name): ?string
     {
-        foreach (self::$routes as $method => $paths) {
+        foreach (self::$routes as $paths) {
             foreach ($paths as $path => $data) {
                 if (isset($data['name']) && $data['name'] === $name) {
                     return $path;
                 }
             }
         }
+
         return null;
     }
 
@@ -255,7 +133,11 @@ class Route
 
     public static function clearRoutes(): void
     {
-        foreach (self::$routes as &$m) $m = [];
+        foreach (self::$routes as &$methodRoutes) {
+            $methodRoutes = [];
+        }
+
+        self::$groupStack = [];
     }
 
     public static function cacheToFile(string $filePath): void
@@ -266,10 +148,7 @@ class Route
         }
 
         $export = var_export(self::$routes, true);
-        file_put_contents($filePath, "<?php
-
-return " . $export . ";
-");
+        file_put_contents($filePath, "<?php\n\nreturn " . $export . ";\n");
     }
 
     public static function loadFromFile(string $filePath): bool
@@ -284,7 +163,56 @@ return " . $export . ";
         }
 
         self::$routes = $routes;
+        self::$groupStack = [];
+
         return true;
     }
 
+    private static function addRoute(string $method, string $path, $action, array $options = []): void
+    {
+        [$path, $options] = self::applyGroupAttributes($path, $options);
+        $method = strtoupper($method);
+        $path = '/' . trim($path, '/');
+
+        self::$routes[$method][$path] = [
+            'method' => $method,
+            'path' => $path,
+            'action' => $action,
+            'options' => $options,
+            'name' => $options['as'] ?? null,
+        ];
+    }
+
+    private static function applyGroupAttributes(string $path, array $options): array
+    {
+        $prefix = '';
+        $groupMiddleware = [];
+
+        foreach (self::$groupStack as $group) {
+            $prefix .= '/' . trim((string) $group['prefix'], '/');
+            $groupMiddleware = array_merge($groupMiddleware, (array) $group['middleware']);
+        }
+
+        if ($prefix !== '') {
+            $path = rtrim($prefix, '/') . '/' . ltrim($path, '/');
+        }
+
+        if ($groupMiddleware !== []) {
+            $options['middleware'] = array_merge(
+                $groupMiddleware,
+                (array) ($options['middleware'] ?? [])
+            );
+        }
+
+        return [$path, $options];
+    }
+
+    private static function replaceParams(string $path, array $params): string
+    {
+        foreach ($params as $key => $value) {
+            $path = preg_replace('/\{' . preg_quote((string) $key, '/') . '(?::[^}]+)?\}/', rawurlencode((string) $value), $path);
+        }
+
+        return $path;
+    }
 }

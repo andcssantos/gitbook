@@ -2,6 +2,8 @@
 
 namespace App\Http;
 
+use App\Utils\Config;
+
 class Request
 {
     public static function method(): string
@@ -19,8 +21,33 @@ class Request
         static $cache = null;
 
         if ($cache === null) {
+            $body = self::rawBody();
+            if ($body === '') {
+                $cache = [];
+            } else {
+                $decoded = json_decode($body, true);
+                if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+                    throw new HttpException('Malformed JSON request body.', 400);
+                }
+
+                $cache = $decoded;
+            }
+        }
+
+        return $cache;
+    }
+
+    public static function rawBody(): string
+    {
+        static $cache = null;
+
+        if ($cache === null) {
             $input = file_get_contents('php://input');
-            $cache = json_decode($input, true) ?? [];
+            $cache = $input === false ? '' : $input;
+            $maxBytes = (int) Config::get('security.request.max_body_bytes', 1048576);
+            if ($maxBytes > 0 && strlen($cache) > $maxBytes) {
+                throw new HttpException('Request body too large.', 413);
+            }
         }
 
         return $cache;
@@ -43,8 +70,8 @@ class Request
             return $_POST;
         }
 
-        parse_str(file_get_contents('php://input'), $parsedInput);
-        return is_array($parsedInput) ? $parsedInput : [];
+        parse_str(self::rawBody(), $parsedInput);
+        return $parsedInput;
     }
 
     public static function has(string $key): bool
@@ -98,6 +125,25 @@ class Request
     public static function headers(): array
     {
         return function_exists('getallheaders') ? getallheaders() : [];
+    }
+
+    public static function path(): string
+    {
+        $uri = $_SERVER['REQUEST_URI'] ?? '/';
+        $path = parse_url($uri, PHP_URL_PATH);
+
+        return is_string($path) && $path !== '' ? $path : '/';
+    }
+
+    public static function ip(): string
+    {
+        $trustProxy = (bool) \App\Utils\Config::get('app.trust_proxy', false);
+        $forwardedFor = $trustProxy ? self::header('X-Forwarded-For') : null;
+        if (is_string($forwardedFor) && $forwardedFor !== '') {
+            return trim(explode(',', $forwardedFor)[0]);
+        }
+
+        return $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
     }
 
     public static function notFoundResponse(): void

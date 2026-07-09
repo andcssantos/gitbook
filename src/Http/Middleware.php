@@ -3,17 +3,12 @@
 namespace App\Http;
 
 use App\Utils\Config;
+use RuntimeException;
 
 class Middleware
 {
-    /**
-     * Mapeamento de 'apelidos' para as classes reais.
-     */
     private static array $map = [];
 
-    /**
-     * Executa a fila de middlewares de uma rota.
-     */
     public static function bootstrap(): void
     {
         self::$map = (array) Config::get('middleware.aliases', []);
@@ -33,28 +28,32 @@ class Middleware
     public static function handle(array $middlewares): void
     {
         foreach ($middlewares as $middleware) {
-            $middlewareClass = self::resolveMiddlewareClass($middleware);
+            [$middlewareClass, $params] = self::resolveMiddleware((string) $middleware);
             $instance = new $middlewareClass();
 
             if (!method_exists($instance, 'handle')) {
-                throw new \RuntimeException("Middleware '{$middlewareClass}' precisa implementar handle().");
+                throw new RuntimeException("Middleware '{$middlewareClass}' precisa implementar handle().");
             }
 
-            $instance->handle(new Request(), new Response());
+            $instance->handle(new Request(), new Response(), ...$params);
         }
     }
 
-    private static function resolveMiddlewareClass(string $middleware): string
+    private static function resolveMiddleware(string $middleware): array
     {
-        if (isset(self::$map[$middleware])) {
-            return self::$map[$middleware];
+        $parts = explode(':', $middleware, 2);
+        $name = $parts[0];
+        $params = isset($parts[1]) ? array_map('trim', explode(',', $parts[1])) : [];
+
+        if (isset(self::$map[$name])) {
+            return [self::$map[$name], $params];
         }
 
-        if (class_exists($middleware)) {
-            return $middleware;
+        if (class_exists($name)) {
+            return [$name, $params];
         }
 
-        throw new \RuntimeException("Middleware '{$middleware}' não encontrado.");
+        throw new RuntimeException("Middleware '{$middleware}' nao encontrado.");
     }
 }
 

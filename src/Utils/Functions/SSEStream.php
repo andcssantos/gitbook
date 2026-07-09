@@ -2,6 +2,8 @@
 
 namespace App\Utils\Functions;
 
+use App\Utils\Config;
+
 class SSEStream
 {
     private CacheManager $cache;
@@ -20,71 +22,79 @@ class SSEStream
         int $sleepSeconds = 2,
         string $eventName = 'update'
     ) {
-        // Instanciamos o cache uma única vez
         $this->cache = new CacheManager($cacheNamespace, $defaultTtl);
         $this->cacheKey = $cacheKey;
         $this->fetchCallback = $fetchCallback;
-        $this->maxMessages = $maxMessages;
-        $this->sleepSeconds = $sleepSeconds;
-        $this->eventName = $eventName;
+        $this->maxMessages = max(1, $maxMessages);
+        $this->sleepSeconds = max(1, $sleepSeconds);
+        $this->eventName = $this->sanitizeEventName($eventName);
     }
 
     public function start(): void
     {
-        // Headers de protocolo para fluxo contínuo
-        header("Content-Type: text/event-stream");
-        header("Cache-Control: no-cache");
-        header("Connection: keep-alive");
-        header("Access-Control-Allow-Origin: *");
-        header("X-Accel-Buffering: no");
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache, no-transform');
+        header('Connection: keep-alive');
+        header('X-Accel-Buffering: no');
+        $this->sendCorsHeader();
 
-        // Libera o arquivo de sessão para não travar o restante do sistema
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_write_close();
         }
 
         $lastHash = null;
         $messageCount = 0;
+        $startedAt = time();
+        $lastHeartbeat = time();
+        $maxSeconds = max(1, (int) Config::get('security.sse.max_seconds', 120));
+        $heartbeatSeconds = max(1, (int) Config::get('security.sse.heartbeat_seconds', 15));
 
-        // Instrução para o navegador reconectar em 1s se a conexão cair
         echo "retry: 1000\n\n";
         $this->flushBuffer();
 
         while (true) {
-            // Tenta obter dados do cache primeiro
-            $data = $this->cache->get($this->cacheKey);
             $source = 'cache';
+            $data = $this->cache->rememberStale(
+                $this->cacheKey,
+                function () use (&$source): mixed {
+                    $source = 'origin';
+                    return ($this->fetchCallback)();
+                },
+                null,
+                $this->sleepSeconds * 3
+            );
 
-            if ($data === null) {
-                // Se expirou no cache, busca na fonte original (DB/API)
-                $data = ($this->fetchCallback)();
-                $this->cache->set($this->cacheKey, $data);
-                $source = 'origin';
-            }
-
-            // Gera hash para verificar mudança de estado
-            $currentHash = md5(json_encode($data));
+            $encodedData = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $currentHash = hash('sha256', $encodedData === false ? '' : $encodedData);
 
             if ($currentHash !== $lastHash) {
                 $lastHash = $currentHash;
 
                 $payload = json_encode([
-                    "status"  => "success",
-                    "source"  => $source,
-                    "event"   => $this->eventName,
-                    "data"    => $data,
-                    "timestamp" => time()
-                ], JSON_UNESCAPED_UNICODE);
-                
-                echo "event: {$this->eventName}\n";
-                echo "data: {$payload}\n\n";
+                    'status' => 'success',
+                    'source' => $source,
+                    'event' => $this->eventName,
+                    'data' => $data,
+                    'timestamp' => time(),
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
+                echo "event: {$this->eventName}\n";
+                echo 'data: ' . ($payload ?: '{}') . "\n\n";
                 $this->flushBuffer();
                 $messageCount++;
             }
 
-            // Critérios de saída: desconexão ou limite de mensagens
-            if (connection_aborted() || $messageCount >= $this->maxMessages) {
+            if ((time() - $lastHeartbeat) >= $heartbeatSeconds) {
+                echo ': heartbeat ' . time() . "\n\n";
+                $this->flushBuffer();
+                $lastHeartbeat = time();
+            }
+
+            if (
+                connection_aborted()
+                || $messageCount >= $this->maxMessages
+                || (time() - $startedAt) >= $maxSeconds
+            ) {
                 break;
             }
 
@@ -97,6 +107,23 @@ class SSEStream
         if (ob_get_level() > 0) {
             ob_flush();
         }
+
         flush();
+    }
+
+    private function sendCorsHeader(): void
+    {
+        $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+        $allowedOrigins = (array) Config::get('security.sse.allowed_origins', []);
+
+        if ($origin !== '' && in_array($origin, $allowedOrigins, true)) {
+            header("Access-Control-Allow-Origin: {$origin}");
+            header('Vary: Origin');
+        }
+    }
+
+    private function sanitizeEventName(string $eventName): string
+    {
+        return preg_replace('/[^A-Za-z0-9_.-]/', '', $eventName) ?: 'update';
     }
 }

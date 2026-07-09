@@ -8,3 +8,7 @@
 /cache/**
 /cache
 composer.lock
+.phpunit.result.cache
+php-server-*.log
+src/.cache/
+bootstrap/cache/*.php

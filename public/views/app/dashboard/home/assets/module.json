@@ -1,36 +1,44 @@
 {
-    "version"   : "1.0.0",
-    "lang"      : "pt-BR",
-    "charset"   : "UTF-8",
+    "name": "home",
+    "version": "1.0.0",
+    "description": "Pagina inicial do dashboard",
+    "lang": "pt-BR",
+    "charset": "UTF-8",
+    "type": "page",
+    "layout": "dashboard",
+    "auth": true,
+    "cache": {
+        "html": 0,
+        "assets": 86400,
+        "preload": true
+    },
     "seo": {
-        "title" : "Gitbook | Dashboard",
-        "meta"  : [
+        "title": "Gitbook | Dashboard",
+        "description": "Dashboard do GitBook Framework",
+        "meta": [
             {
-                "name"      : "author",
-                "content"   : "GitBook"
+                "name": "author",
+                "content": "GitBook"
             },
             {
-                "name"      : "keywords",
-                "content"   : "GitBook, Home, Dashboard"
+                "name": "keywords",
+                "content": "GitBook, Dashboard"
             },
             {
-                "name"      : "description",
-                "content"   : "Descrição da Página"
-            },
-            {
-                "name"      : "viewport",
-                "content"   : "width=device-width, initial-scale=1.0"
-            },
-            {
-                "name"      : "robots",
-                "content"   : "index, follow"
-            },
-            {
-                "name"      : "googlebot",
-                "content"   : "index, follow"
+                "name": "robots",
+                "content": "noindex, nofollow"
             }
         ]
     },
-    "plugins"   : [],
-    "styles"    : []
+    "assets": {
+        "css": [],
+        "js": [],
+        "preload": [],
+        "prefetch": []
+    },
+    "dependencies": {
+        "libs": [],
+        "modules": []
+    },
+    "data": {}
 }

@@ -57,7 +57,7 @@ class LoginModel extends Model
     public function resetBlockAttempts(string $email): bool
     {
         $sql = "UPDATE {$this->table} SET block_attempts = 0 WHERE user_email = :email";
-        $result = $this->fetch($sql, ['email' => $email]);
+        $result = $this->query($sql, ['email' => $email])->rowCount() > 0;
         if ($result) {
             $this->cache->delete("account_email_" . strtolower($email));
         }
@@ -67,7 +67,7 @@ class LoginModel extends Model
     public function addBlockAttempt(string $email): bool
     {
         $sql = "UPDATE {$this->table} SET block_attempts = block_attempts + 1 WHERE user_email = :email";
-        $result = $this->fetch($sql, ['email' => $email]);
+        $result = $this->query($sql, ['email' => $email])->rowCount() > 0;
         if ($result) {
             $this->cache->delete("account_email_" . strtolower($email));
         }
@@ -77,7 +77,7 @@ class LoginModel extends Model
     public function blockAccount(string $email): bool
     {
         $sql = "UPDATE {$this->table} SET status = 2 WHERE user_email = :email";
-        $result = $this->fetch($sql, ['email' => $email]);
+        $result = $this->query($sql, ['email' => $email])->rowCount() > 0;
         if ($result) {
             $this->cache->delete("account_email_" . strtolower($email));
         }

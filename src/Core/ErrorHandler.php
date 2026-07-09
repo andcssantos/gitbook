@@ -2,6 +2,7 @@
 
 namespace App\Core;
 
+use App\Http\HttpException;
 use App\Http\Response;
 use App\Utils\Config;
 use Throwable;
@@ -16,6 +17,17 @@ class ErrorHandler
 
     public static function handleException(Throwable $e): void
     {
+        if ($e instanceof HttpException) {
+            Response::json([
+                'success' => false,
+                'error' => true,
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+            ], $e->status());
+
+            return;
+        }
+
         $debug = (bool) Config::get('app.debug', false);
 
         error_log(sprintf('[%s] %s in %s:%d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine()));
