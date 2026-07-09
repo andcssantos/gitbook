@@ -90,7 +90,7 @@ class DatabaseFoundationTest extends TestCase
         $stmt = $this->pdo->prepare('SELECT rule_type FROM container_acceptance_rules WHERE container_definition_id = :container_definition_id ORDER BY priority ASC');
         $stmt->execute(['container_definition_id' => $mainInventoryId]);
 
-        $this->assertContains('CONTAINER_BLOCK', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'rule_type'));
+        $this->assertContains('ACCEPT_ALL', array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'rule_type'));
     }
 
     public function testContainerAcceptanceRulesDoNotStorePixelCoordinates(): void

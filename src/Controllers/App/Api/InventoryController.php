@@ -25,6 +25,40 @@ class InventoryController extends Controller
         $this->success($state, 'Inventory state.');
     }
 
+    public function summary(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $summary = (new InventoryStateService())->summaryForPlayer((int) $player['id']);
+
+        $this->success($summary, 'Inventory summary.');
+    }
+
+    public function showContainer(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $containerPublicId = (string) ($params['containerPublicId'] ?? '');
+            $state = (new InventoryStateService())->containerForPlayer((int) $player['id'], $containerPublicId);
+
+            $this->success($state, 'Inventory container.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function showItem(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $itemPublicId = (string) ($params['itemPublicId'] ?? '');
+            $state = (new InventoryStateService())->itemForPlayer((int) $player['id'], $itemPublicId);
+
+            $this->success($state, 'Inventory item.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
     public function move(array $params = []): void
     {
         try {
@@ -34,6 +68,7 @@ class InventoryController extends Controller
                 'target_container_public_id' => 'required|string|max:64',
                 'grid_x' => 'required|int|min:0',
                 'grid_y' => 'required|int|min:0',
+                'rotated' => 'nullable|boolean',
                 'expected_placement_version' => 'required|int|min:1',
             ]);
 

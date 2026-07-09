@@ -3,6 +3,7 @@
 namespace App\Game\Inventory\Services;
 
 use App\Game\Containers\Repositories\ContainerRepository;
+use App\Game\Containers\Services\PhysicalContainerLinkService;
 use App\Game\Items\Repositories\ItemDefinitionRepository;
 use App\Game\Items\Repositories\ItemInstanceRepository;
 use App\Http\HttpException;
@@ -65,8 +66,6 @@ class StarterInventoryService
         $itemDefinitions = new ItemDefinitionRepository($this->pdo());
         $items = new ItemInstanceRepository($this->pdo());
 
-        $backpackDefinition = $this->required($containers->findDefinition('small_backpack'), 'Small backpack container definition not found.');
-
         $placed = [];
         foreach ($this->starterItems() as $entry) {
             $definition = $this->required($itemDefinitions->findActiveByCode($entry['code']), "Item definition not found: {$entry['code']}");
@@ -92,10 +91,10 @@ class StarterInventoryService
             ]);
 
             if ($entry['code'] === 'small_leather_backpack') {
-                $containers->createInstanceFromDefinition($backpackDefinition, $playerId, [
-                    'source_item_instance_id' => $itemId,
-                    'sort_order' => 40,
-                ]);
+                $backpackItem = $items->findByPublicIdAndOwner((string) $this->publicIdForItem($itemId), $playerId, true);
+                if ($backpackItem !== null) {
+                    (new PhysicalContainerLinkService($this->pdo))->ensureForItem($playerId, $backpackItem, 40);
+                }
             }
 
             $placed[] = [
@@ -177,6 +176,14 @@ class StarterInventoryService
         return $row;
     }
 
+    private function publicIdForItem(int $itemId): string
+    {
+        $stmt = $this->pdo()->prepare('SELECT public_id FROM item_instances WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $itemId]);
+
+        return (string) $stmt->fetchColumn();
+    }
+
     private function transaction(callable $callback): mixed
     {
         if ($this->pdo instanceof PDO) {
@@ -204,8 +211,8 @@ class StarterInventoryService
         return DB::transaction(fn (): mixed => $callback());
     }
 
-    private function pdo(): ?PDO
+    private function pdo(): PDO
     {
-        return $this->pdo;
+        return $this->pdo ?? DB::pdo();
     }
 }

@@ -23,10 +23,6 @@ class InventoryPlacementValidator
         bool $rotated,
         int $expectedPlacementVersion
     ): array {
-        if ($rotated) {
-            throw new InventoryException('INVENTORY_ROTATION_DISABLED', 'Inventory rotation is disabled for MVP.');
-        }
-
         if ((int) ($currentPlacement['locked'] ?? 0) === 1) {
             throw new InventoryException('INVENTORY_ITEM_LOCKED', 'Inventory item placement is locked.');
         }
@@ -44,13 +40,12 @@ class InventoryPlacementValidator
         $rejectionCode = $this->acceptance->rejectionCode($targetContainer, $item);
         if ($rejectionCode !== null) {
             $message = $rejectionCode === 'INVENTORY_CONTAINER_ITEM_BLOCKED'
-                ? 'Container items cannot be placed inside this container.'
-                : 'This container does not accept the selected item.';
+                ? 'Itens-container nao podem ser colocados dentro deste container.'
+                : 'Este container nao aceita o item selecionado.';
             throw new InventoryException($rejectionCode, $message);
         }
 
-        $width = (int) $item['definition_grid_w'];
-        $height = (int) $item['definition_grid_h'];
+        [$width, $height] = $this->dimensions($item, $rotated);
 
         if (!$this->insideBounds($targetX, $targetY, $width, $height, $targetContainer)) {
             throw new InventoryException('INVENTORY_OUT_OF_BOUNDS', 'Inventory placement is out of bounds.');
@@ -89,20 +84,15 @@ class InventoryPlacementValidator
         int $targetY,
         bool $rotated = false
     ): array {
-        if ($rotated) {
-            throw new InventoryException('INVENTORY_ROTATION_DISABLED', 'Inventory rotation is disabled for MVP.');
-        }
-
         $rejectionCode = $this->acceptance->rejectionCode($targetContainer, $item);
         if ($rejectionCode !== null) {
             $message = $rejectionCode === 'INVENTORY_CONTAINER_ITEM_BLOCKED'
-                ? 'Container items cannot be placed inside this container.'
-                : 'This container does not accept the selected item.';
+                ? 'Itens-container nao podem ser colocados dentro deste container.'
+                : 'Este container nao aceita o item selecionado.';
             throw new InventoryException($rejectionCode, $message);
         }
 
-        $width = (int) $item['definition_grid_w'];
-        $height = (int) $item['definition_grid_h'];
+        [$width, $height] = $this->dimensions($item, $rotated);
 
         if (!$this->insideBounds($targetX, $targetY, $width, $height, $targetContainer)) {
             throw new InventoryException('INVENTORY_OUT_OF_BOUNDS', 'Inventory placement is out of bounds.');
@@ -127,6 +117,18 @@ class InventoryPlacementValidator
             'grid_w' => $width,
             'grid_h' => $height,
         ];
+    }
+
+    private function dimensions(array $item, bool $rotated): array
+    {
+        $width = (int) $item['definition_grid_w'];
+        $height = (int) $item['definition_grid_h'];
+
+        if ($rotated) {
+            return [$height, $width];
+        }
+
+        return [$width, $height];
     }
 
     private function insideBounds(int $x, int $y, int $w, int $h, array $container): bool

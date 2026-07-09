@@ -10,6 +10,30 @@ Route::get('/api/inventory', 'App/Api/InventoryController@index', [
     ],
 ]);
 
+Route::get('/api/inventory/summary', 'App/Api/InventoryController@summary', [
+    'as' => 'api.inventory.summary',
+    'middleware' => [
+        'auth',
+        'rateLimit:120,60',
+    ],
+]);
+
+Route::get('/api/inventory/containers/{containerPublicId:string:64}', 'App/Api/InventoryController@showContainer', [
+    'as' => 'api.inventory.containers.show',
+    'middleware' => [
+        'auth',
+        'rateLimit:120,60',
+    ],
+]);
+
+Route::get('/api/inventory/items/{itemPublicId:string:64}', 'App/Api/InventoryController@showItem', [
+    'as' => 'api.inventory.items.show',
+    'middleware' => [
+        'auth',
+        'rateLimit:120,60',
+    ],
+]);
+
 Route::post('/api/inventory/move', 'App/Api/InventoryController@move', [
     'as' => 'api.inventory.move',
     'middleware' => [
@@ -17,7 +41,7 @@ Route::post('/api/inventory/move', 'App/Api/InventoryController@move', [
         'csrf',
         'rateLimit:60,60',
         'idempotency:api.inventory.move',
-        'validate:item_public_id=required|string|max:64,source_container_public_id=required|string|max:64,target_container_public_id=required|string|max:64,grid_x=required|int|min:0,grid_y=required|int|min:0,expected_placement_version=required|int|min:1',
+        'validate:item_public_id=required|string|max:64,source_container_public_id=required|string|max:64,target_container_public_id=required|string|max:64,grid_x=required|int|min:0,grid_y=required|int|min:0,rotated=nullable|boolean,expected_placement_version=required|int|min:1',
         'audit:inventory.move',
     ],
 ]);

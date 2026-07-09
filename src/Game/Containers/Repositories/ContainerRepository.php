@@ -27,9 +27,19 @@ class ContainerRepository
         return $this->instances->findByOwnerAndDefinitionCode($playerId, $definitionCode);
     }
 
+    public function listActiveInstancesForPlayer(int $playerId, bool $lock = false): array
+    {
+        return $this->instances->listActiveForPlayer($playerId, $lock);
+    }
+
     public function findInstanceByPublicIdForPlayer(string $publicId, int $playerId, bool $lock = false): ?array
     {
         return $this->instances->findByPublicIdAndOwner($publicId, $playerId, $lock);
+    }
+
+    public function findInstanceBySourceItemId(int $sourceItemInstanceId, bool $lock = false): ?array
+    {
+        return $this->instances->findBySourceItemInstanceId($sourceItemInstanceId, $lock);
     }
 
     public function findInstanceByPublicId(string $publicId): ?array

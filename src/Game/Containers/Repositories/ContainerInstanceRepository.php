@@ -44,6 +44,23 @@ class ContainerInstanceRepository
         return is_array($row) ? $row : null;
     }
 
+    public function findBySourceItemInstanceId(int $sourceItemInstanceId, bool $lock = false): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT ci.*, cd.code AS definition_code, cd.container_type, cd.allow_container_items
+            FROM container_instances ci
+            INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id
+            WHERE ci.source_item_instance_id = :source_item_instance_id AND ci.status = :status
+            LIMIT 1' . $this->lockClause($lock));
+        $stmt->execute([
+            'source_item_instance_id' => $sourceItemInstanceId,
+            'status' => 'active',
+        ]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
     public function findByPublicId(string $publicId): ?array
     {
         $stmt = $this->pdo()->prepare('SELECT * FROM container_instances WHERE public_id = :public_id LIMIT 1');
@@ -52,6 +69,25 @@ class ContainerInstanceRepository
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return is_array($row) ? $row : null;
+    }
+
+    public function listActiveForPlayer(int $playerId, bool $lock = false): array
+    {
+        $stmt = $this->pdo()->prepare('SELECT
+                ci.*,
+                cd.code AS definition_code,
+                cd.container_type,
+                cd.allow_container_items
+            FROM container_instances ci
+            INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id
+            WHERE ci.owner_player_id = :player_id AND ci.status = :status
+            ORDER BY ci.sort_order ASC, ci.id ASC' . $this->lockClause($lock));
+        $stmt->execute([
+            'player_id' => $playerId,
+            'status' => 'active',
+        ]);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function create(array $data): int

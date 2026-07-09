@@ -76,6 +76,24 @@ class InventoryPlacementValidationTest extends TestCase
         );
     }
 
+    public function testContainerItemCanMoveInsideMainInventory(): void
+    {
+        $result = $this->move('small_leather_backpack', 'main_inventory_level_1', 'main_inventory_level_1', 6, 0, 1);
+
+        $this->assertSame(6, $result['grid_x']);
+        $this->assertSame(0, $result['grid_y']);
+        $this->assertSame(2, $result['placement_version']);
+    }
+
+    public function testRotatedMoveSwapsGridDimensions(): void
+    {
+        $result = $this->move('stone_pickaxe', 'main_inventory_level_1', 'main_inventory_level_1', 0, 2, 1, true);
+
+        $this->assertTrue($result['rotated']);
+        $this->assertSame(3, $result['grid_w']);
+        $this->assertSame(2, $result['grid_h']);
+    }
+
     public function testStalePlacementVersionIsRejected(): void
     {
         $this->move('stone', 'main_inventory_level_1', 'main_inventory_level_1', 3, 1, 1);
@@ -161,12 +179,12 @@ class InventoryPlacementValidationTest extends TestCase
         }
     }
 
-    private function move(string $itemCode, string $sourceCode, string $targetCode, int $x, int $y, int $version): array
+    private function move(string $itemCode, string $sourceCode, string $targetCode, int $x, int $y, int $version, bool $rotated = false): array
     {
-        return $this->moveByPublicId($this->itemPublicId($itemCode), $sourceCode, $targetCode, $x, $y, $version);
+        return $this->moveByPublicId($this->itemPublicId($itemCode), $sourceCode, $targetCode, $x, $y, $version, $rotated);
     }
 
-    private function moveByPublicId(string $itemPublicId, string $sourceCode, string $targetCode, int $x, int $y, int $version): array
+    private function moveByPublicId(string $itemPublicId, string $sourceCode, string $targetCode, int $x, int $y, int $version, bool $rotated = false): array
     {
         return (new InventoryMoveService($this->pdo))->move(new MoveItemRequest(
             1,
@@ -175,7 +193,7 @@ class InventoryPlacementValidationTest extends TestCase
             $this->containerPublicId($targetCode),
             $x,
             $y,
-            false,
+            $rotated,
             $version
         ));
     }

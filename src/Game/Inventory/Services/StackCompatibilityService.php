@@ -6,6 +6,17 @@ use App\Game\Inventory\InventoryException;
 
 class StackCompatibilityService
 {
+    public function canMerge(array $source, array $target, int $quantity): bool
+    {
+        try {
+            $this->assertCanMerge($source, $target, $quantity);
+
+            return true;
+        } catch (InventoryException) {
+            return false;
+        }
+    }
+
     public function assertCanMerge(array $source, array $target, int $quantity): void
     {
         if ((int) $source['id'] === (int) $target['id']) {

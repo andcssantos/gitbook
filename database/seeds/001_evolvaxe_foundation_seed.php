@@ -150,10 +150,12 @@ return function (PDO $pdo): void {
         ]);
     };
 
-    foreach (['main_inventory_level_1', 'small_backpack', 'medium_backpack', 'wooden_chest', 'market_delivery', 'market_escrow'] as $containerCode) {
+    foreach (['small_backpack', 'medium_backpack', 'wooden_chest', 'market_delivery', 'market_escrow'] as $containerCode) {
         $upsertAcceptanceRule($containerCode, 'CONTAINER_BLOCK', '', false, 10);
         $upsertAcceptanceRule($containerCode, 'ACCEPT_ALL', '', true, 100);
     }
+
+    $upsertAcceptanceRule('main_inventory_level_1', 'ACCEPT_ALL', '', true, 100);
 
     $upsertAcceptanceRule('expedition_carry', 'CONTAINER_BLOCK', '', false, 10);
     foreach (['material', 'currency', 'tool'] as $categoryCode) {

@@ -67,6 +67,18 @@ class ApiRouteTest extends TestCase
             'rateLimit:120,60',
         ], $indexRoute['options']['middleware']);
 
+        $summaryRoute = Route::routes()['GET']['/api/inventory/summary'] ?? null;
+        $this->assertNotNull($summaryRoute);
+        $this->assertSame('api.inventory.summary', $summaryRoute['name']);
+
+        $containerRoute = Route::routes()['GET']['/api/inventory/containers/{containerPublicId:string:64}'] ?? null;
+        $this->assertNotNull($containerRoute);
+        $this->assertSame('api.inventory.containers.show', $containerRoute['name']);
+
+        $itemRoute = Route::routes()['GET']['/api/inventory/items/{itemPublicId:string:64}'] ?? null;
+        $this->assertNotNull($itemRoute);
+        $this->assertSame('api.inventory.items.show', $itemRoute['name']);
+
         $route = Route::routes()['POST']['/api/inventory/move'] ?? null;
 
         $this->assertNotNull($route);
@@ -76,7 +88,7 @@ class ApiRouteTest extends TestCase
             'csrf',
             'rateLimit:60,60',
             'idempotency:api.inventory.move',
-            'validate:item_public_id=required|string|max:64,source_container_public_id=required|string|max:64,target_container_public_id=required|string|max:64,grid_x=required|int|min:0,grid_y=required|int|min:0,expected_placement_version=required|int|min:1',
+            'validate:item_public_id=required|string|max:64,source_container_public_id=required|string|max:64,target_container_public_id=required|string|max:64,grid_x=required|int|min:0,grid_y=required|int|min:0,rotated=nullable|boolean,expected_placement_version=required|int|min:1',
             'audit:inventory.move',
         ], $route['options']['middleware']);
 
@@ -103,5 +115,44 @@ class ApiRouteTest extends TestCase
             'validate:source_item_public_id=required|string|max:64,source_container_public_id=required|string|max:64,target_container_public_id=required|string|max:64,quantity=required|int|min:1,grid_x=required|int|min:0,grid_y=required|int|min:0,expected_placement_version=required|int|min:1',
             'audit:inventory.stacks.split',
         ], $splitRoute['options']['middleware']);
+    }
+
+    public function testItemActionsRoutesUseExpectedMiddlewareStack(): void
+    {
+        require __DIR__ . '/../../src/routes/app/api/RoutesItemActions.php';
+
+        $indexRoute = Route::routes()['GET']['/api/items/{itemPublicId:string:64}/actions'] ?? null;
+        $this->assertNotNull($indexRoute);
+        $this->assertSame('api.items.actions.index', $indexRoute['name']);
+
+        $executeRoute = Route::routes()['POST']['/api/items/{itemPublicId:string:64}/actions/{actionCode:string:40}'] ?? null;
+        $this->assertNotNull($executeRoute);
+        $this->assertSame('api.items.actions.execute', $executeRoute['name']);
+        $this->assertSame([
+            'auth',
+            'csrf',
+            'rateLimit:60,60',
+            'idempotency:api.items.actions.execute',
+            'validate:confirm=nullable|boolean',
+            'audit:items.actions.execute',
+        ], $executeRoute['options']['middleware']);
+    }
+
+    public function testDevGrantItemRouteUsesExpectedMiddlewareStack(): void
+    {
+        require __DIR__ . '/../../src/routes/app/api/RoutesDevInventory.php';
+
+        $route = Route::routes()['POST']['/api/dev/inventory/grant-item'] ?? null;
+
+        $this->assertNotNull($route);
+        $this->assertSame('api.dev.inventory.grant-item', $route['name']);
+        $this->assertSame([
+            'auth',
+            'csrf',
+            'rateLimit:30,60',
+            'idempotency:api.dev.inventory.grant-item',
+            'validate:item_definition_code=required|string|max:80,quantity=required|int|min:1,quality_bucket=nullable|string|max:40,quality_value=nullable|numeric,material_origin_code=nullable|string|max:80',
+            'audit:inventory.dev.grant-item',
+        ], $route['options']['middleware']);
     }
 }

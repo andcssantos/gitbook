@@ -127,6 +127,46 @@ class ItemInstanceRepository
         $stmt->execute(['id' => $itemInstanceId]);
     }
 
+    public function listPlacedForPlayer(int $playerId, bool $lock = false): array
+    {
+        $stmt = $this->pdo()->prepare('SELECT
+                ii.*,
+                id.code AS definition_code,
+                id.grid_w AS definition_grid_w,
+                id.grid_h AS definition_grid_h,
+                id.is_container,
+                id.stackable,
+                id.max_stack,
+                id.equip_slot_code,
+                id.base_config,
+                ic.code AS category_code,
+                mf.code AS material_family_code,
+                ci.container_instance_id,
+                ci.grid_x,
+                ci.grid_y,
+                cinst.public_id AS container_public_id,
+                cinst.sort_order AS container_sort_order,
+                cd.container_type,
+                cd.code AS container_definition_code
+            FROM item_instances ii
+            INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+            INNER JOIN item_categories ic ON ic.id = id.category_id
+            LEFT JOIN material_families mf ON mf.id = id.material_family_id
+            INNER JOIN container_items ci ON ci.item_instance_id = ii.id
+            INNER JOIN container_instances cinst ON cinst.id = ci.container_instance_id
+            INNER JOIN container_definitions cd ON cd.id = cinst.container_definition_id
+            WHERE ii.owner_player_id = :player_id
+                AND cinst.owner_player_id = :player_id
+                AND cinst.status = :status
+            ORDER BY cinst.sort_order ASC, ci.grid_y ASC, ci.grid_x ASC, ci.id ASC' . $this->lockClause($lock));
+        $stmt->execute([
+            'player_id' => $playerId,
+            'status' => 'active',
+        ]);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     public function createSplitStack(array $source, int $quantity): int
     {
         return $this->create([

@@ -5,6 +5,7 @@
             <h1>Inventario</h1>
         </div>
         <div class="inventory-actions">
+            <span class="inventory-summary" data-inventory-summary></span>
             <span class="inventory-status" data-inventory-status>Carregando...</span>
             <button class="inventory-button" type="button" data-inventory-refresh>Atualizar</button>
         </div>
