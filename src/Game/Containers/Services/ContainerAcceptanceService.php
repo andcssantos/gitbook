@@ -21,6 +21,10 @@ class ContainerAcceptanceService
 
     public function rejectionCode(array $container, array $item): ?string
     {
+        if (!isset($container['container_definition_id'])) {
+            return null;
+        }
+
         $rules = $this->rules->listForContainerDefinition((int) $container['container_definition_id']);
         if ($rules === []) {
             return null;

@@ -11,5 +11,7 @@
         </div>
     </header>
 
+    <section class="inventory-equipment-panel" data-inventory-equipment></section>
+    <section class="inventory-container-dock" data-inventory-dock></section>
     <main class="inventory-layout" data-inventory-containers></main>
 </section>

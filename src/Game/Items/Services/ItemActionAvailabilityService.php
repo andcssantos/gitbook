@@ -50,6 +50,11 @@ class ItemActionAvailabilityService
 
     private function isEnabledForItem(array $definition, array $item): bool
     {
+        $actionCode = (string) $definition['code'];
+        if ($this->isEquipped($item) && !in_array($actionCode, ['INSPECT', 'UNEQUIP'], true)) {
+            return false;
+        }
+
         $rules = $this->rules->listForActionDefinition((int) $definition['id']);
         if ($rules === []) {
             return false;
@@ -77,7 +82,29 @@ class ItemActionAvailabilityService
             'ITEM_CATEGORY' => (string) ($item['category_code'] ?? '') === $reference,
             'ITEM_DEFINITION' => (string) ($item['definition_code'] ?? '') === $reference,
             'IS_CONTAINER' => (int) ($item['is_container'] ?? 0) === 1,
+            'HAS_EQUIP_SLOT' => trim((string) ($item['equip_slot_code'] ?? '')) !== '',
+            'IS_EQUIPPED' => $this->isEquipped($item),
             default => false,
         };
+    }
+
+    private function isEquipped(array $item): bool
+    {
+        if (!isset($item['id'], $item['owner_player_id'])) {
+            return false;
+        }
+
+        $stmt = $this->pdo()->prepare('SELECT item_instance_id FROM player_equipment WHERE player_id = :player_id AND item_instance_id = :item_instance_id LIMIT 1');
+        $stmt->execute([
+            'player_id' => (int) $item['owner_player_id'],
+            'item_instance_id' => (int) $item['id'],
+        ]);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
+    private function pdo(): PDO
+    {
+        return $this->pdo ?? \App\Support\DB::pdo();
     }
 }

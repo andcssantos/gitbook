@@ -30,6 +30,7 @@ class InventoryMoveService
             $item = $this->loadOwnedItem($items, $request->itemPublicId, $request->playerId);
             $sourceContainer = $this->loadOwnedContainer($containers, $request->sourceContainerPublicId, $request->playerId, 'INVENTORY_SOURCE_CONTAINER_NOT_FOUND');
             $targetContainer = $this->loadOwnedContainer($containers, $request->targetContainerPublicId, $request->playerId, 'INVENTORY_TARGET_CONTAINER_NOT_FOUND');
+            $this->validateContainerFlow($sourceContainer, $targetContainer);
 
             $currentPlacement = $containers->findPlacement((int) $item['id'], (int) $sourceContainer['id'], true);
             if ($currentPlacement === null) {
@@ -110,6 +111,23 @@ class InventoryMoveService
             'new_grid_y' => $request->gridY,
             'placement_version' => (int) $updated['placement_version'],
         ]);
+    }
+
+    private function validateContainerFlow(array $sourceContainer, array $targetContainer): void
+    {
+        if ((string) ($targetContainer['container_type'] ?? '') !== 'MARKET_DELIVERY') {
+            return;
+        }
+
+        if ((string) ($sourceContainer['container_type'] ?? '') === 'MAIN_INVENTORY') {
+            return;
+        }
+
+        throw new InventoryException(
+            'INVENTORY_MARKET_DELIVERY_SOURCE_RESTRICTED',
+            'Market delivery only accepts deposits from the main inventory.',
+            422
+        );
     }
 
     private function loadOwnedContainer(ContainerRepository $containers, string $publicId, int $playerId, string $notFoundCode): array

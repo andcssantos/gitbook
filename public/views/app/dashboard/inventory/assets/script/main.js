@@ -3,6 +3,8 @@ import { installToastStyles, toast } from '/assets/framework/toast.js';
 
 const app = document.querySelector('[data-inventory-app]');
 const containerRoot = document.querySelector('[data-inventory-containers]');
+const equipmentRoot = document.querySelector('[data-inventory-equipment]');
+const dockRoot = document.querySelector('[data-inventory-dock]');
 const statusNode = document.querySelector('[data-inventory-status]');
 const summaryNode = document.querySelector('[data-inventory-summary]');
 const refreshButton = document.querySelector('[data-inventory-refresh]');
@@ -18,6 +20,9 @@ let silent = false;
 let loading = false;
 let actionInFlight = false;
 let contextMenuState = null;
+let openContainerPublicIds = new Set(JSON.parse(localStorage.getItem('evolvaxe.inventory.openContainers') || '[]'));
+let marketDeliveryOpen = localStorage.getItem('evolvaxe.inventory.marketDeliveryOpen') === '1';
+let characterPanelOpen = localStorage.getItem('evolvaxe.inventory.characterPanelOpen') !== '0';
 
 const CELL_SIZE = 44;
 const INVENTORY_DRAG_ENGINE = 'v2';
@@ -41,23 +46,137 @@ function itemLabel(item) {
     return item.item_name || item.definition?.name || item.definition?.code || 'Item';
 }
 
+function rarityKey(item) {
+    const bucket = String(item.quality_bucket || 'common').trim().toLowerCase();
+    if (['normal', 'basic'].includes(bucket)) return 'common';
+    if (['magic', 'uncommon'].includes(bucket)) return 'magic';
+    if (['rare'].includes(bucket)) return 'rare';
+    if (['epic', 'heroic'].includes(bucket)) return 'epic';
+    if (['legendary', 'mythic'].includes(bucket)) return 'legendary';
+    if (['unique', 'relic'].includes(bucket)) return 'unique';
+
+    return /^[a-z0-9_-]+$/i.test(bucket) ? bucket : 'common';
+}
+
+function rarityLabel(item) {
+    const labels = {
+        common: 'Comum',
+        magic: 'Magico',
+        rare: 'Raro',
+        epic: 'Epico',
+        legendary: 'Lendario',
+        unique: 'Unico',
+    };
+
+    return labels[rarityKey(item)] || String(item.quality_bucket || 'Comum');
+}
+
+function formatItemPropertyValue(property) {
+    const value = property.value ?? property.rolled_value ?? 0;
+    const numeric = Number(value);
+    const formatted = Number.isFinite(numeric) && !Number.isInteger(numeric)
+        ? numeric.toFixed(1)
+        : String(value);
+
+    return `${formatted}${property.unit ? property.unit : ''}`;
+}
+
 function itemTooltip(item) {
-    const parts = [
-        `<strong>${escapeHtml(itemLabel(item))}</strong>`,
-        `Codigo: ${escapeHtml(item.definition?.code || '-')}`,
-        `Quantidade: ${Number(item.quantity || 1)}`,
-    ];
+    const quantity = Number(item.quantity || 1);
+    const tags = [
+        escapeHtml(rarityLabel(item)),
+        item.definition?.stackable ? 'Empilhavel' : 'Instanciado',
+        item.definition?.is_container ? 'Container' : null,
+    ].filter(Boolean);
 
-    if (item.definition?.stackable) parts.push('Ctrl+Clique: dividir metade');
-    parts.push('Clique direito: acoes do item');
-    if (item.definition?.is_container) parts.push('Item fisico com container interno');
-    parts.push('Arraste: preview verde/vermelho mostra celulas ocupadas');
-    parts.push('Sobre mochila: azul guarda dentro se houver espaco');
-    parts.push('R: rotacionar durante o arraste');
-    if (item.quality_bucket) parts.push(`Qualidade: ${escapeHtml(item.quality_bucket)}`);
-    if (item.durability?.max) parts.push(`Durabilidade: ${Number(item.durability.current || 0)}/${Number(item.durability.max)}`);
+    const affixes = Array.isArray(item.affixes) ? item.affixes : [];
+    const properties = Array.isArray(item.properties) ? item.properties : [];
+    const sockets = Array.isArray(item.sockets) ? item.sockets : [];
+    const affixList = affixes.length
+        ? `<ul class="inventory-tooltip-affixes">${affixes.map((affix) => `<li><span>${escapeHtml(affix.name)}</span><strong>+${escapeHtml(formatItemPropertyValue(affix))} ${escapeHtml(affix.property_name || '')}</strong></li>`).join('')}</ul>`
+        : '';
+    const propertyList = properties.length
+        ? `<ul class="inventory-tooltip-properties">${properties.map((property) => `<li><span>${escapeHtml(property.name)}</span><strong>${escapeHtml(formatItemPropertyValue(property))}</strong></li>`).join('')}</ul>`
+        : '';
+    const socketList = sockets.length
+        ? `<div class="inventory-tooltip-sockets">${sockets.map((socket) => `<span class="${socket.gem ? 'is-filled' : 'is-empty'}">${socket.gem ? escapeHtml(socket.gem.name) : 'Engaste vazio'}</span>`).join('')}</div>`
+        : '';
+    const details = [
+        item.definition?.description ? `<p>${escapeHtml(item.definition.description)}</p>` : '',
+        affixList,
+        propertyList,
+        socketList,
+        `<dl>
+            <div><dt>Codigo</dt><dd>${escapeHtml(item.definition?.code || '-')}</dd></div>
+            <div><dt>Quantidade</dt><dd>${quantity}</dd></div>
+            ${item.quality_value !== null && item.quality_value !== undefined ? `<div><dt>Qualidade</dt><dd>${Number(item.quality_value).toFixed(1)}</dd></div>` : ''}
+        </dl>`,
+        '<small>Arraste para mover. Pressione R ou Q durante o arraste para rotacionar.</small>',
+    ].filter(Boolean).join('');
 
-    return parts.join('<br>');
+    return `
+        <div class="inventory-tooltip rarity-${rarityKey(item)}">
+            <div class="inventory-tooltip-title">${escapeHtml(itemLabel(item))}</div>
+            <div class="inventory-tooltip-tags">${tags.map((tag) => `<span>${tag}</span>`).join('')}</div>
+            ${details}
+        </div>
+    `;
+}
+
+function itemAssetUrl(item) {
+    const code = String(item.definition?.code || '').trim();
+    if (!/^[a-z0-9_-]+$/i.test(code)) return null;
+
+    return `/assets/game/items/${code}.png`;
+}
+
+function persistContainerPanels() {
+    localStorage.setItem('evolvaxe.inventory.openContainers', JSON.stringify([...openContainerPublicIds]));
+    localStorage.setItem('evolvaxe.inventory.marketDeliveryOpen', marketDeliveryOpen ? '1' : '0');
+}
+
+function persistCharacterPanel() {
+    localStorage.setItem('evolvaxe.inventory.characterPanelOpen', characterPanelOpen ? '1' : '0');
+}
+
+function containerKind(container) {
+    const type = String(container.type || '').toUpperCase();
+    const code = String(container.definition_code || '').toLowerCase();
+
+    if (type === 'MAIN_INVENTORY' || code.startsWith('main_inventory')) return 'main';
+    if (type === 'MARKET_DELIVERY' || code === 'market_delivery') return 'market_delivery';
+    if (type === 'EXPEDITION_CARRY' || code === 'expedition_carry') return 'expedition_carry';
+    if (type === 'BACKPACK') return 'backpack';
+    if (type === 'CHEST') return 'chest';
+
+    return 'secondary';
+}
+
+function isContainerVisible(container) {
+    const kind = containerKind(container);
+    if (kind === 'main') return true;
+    if (kind === 'market_delivery') return marketDeliveryOpen;
+
+    return openContainerPublicIds.has(container.public_id);
+}
+
+function openContainer(containerPublicId) {
+    openContainerPublicIds.add(containerPublicId);
+    persistContainerPanels();
+}
+
+function toggleContainer(container) {
+    const kind = containerKind(container);
+    if (kind === 'market_delivery') {
+        marketDeliveryOpen = !marketDeliveryOpen;
+    } else if (openContainerPublicIds.has(container.public_id)) {
+        openContainerPublicIds.delete(container.public_id);
+    } else {
+        openContainerPublicIds.add(container.public_id);
+    }
+
+    persistContainerPanels();
+    loadInventory();
 }
 
 function gridElement(container) {
@@ -89,29 +208,38 @@ function occupancyLabel(container, summaryEntry) {
     }
 
     const percent = Math.round(Number(summaryEntry.occupancy_ratio || 0) * 100);
-    return `${summaryEntry.item_count} item(ns) · ${percent}%`;
+    return `${summaryEntry.item_count} item(ns) - ${percent}%`;
 }
 
 function renderItem(item) {
     const quantity = Number(item.quantity || 1);
-    const code = item.definition?.code || '';
     const name = itemLabel(item);
+    const assetUrl = itemAssetUrl(item);
     const isContainer = Boolean(item.definition?.is_container);
-    const durabilityMax = Number(item.durability?.max || 0);
-    const durabilityCurrent = Number(item.durability?.current || 0);
-    const durabilityPercent = durabilityMax > 0
-        ? Math.max(0, Math.min(100, Math.round((durabilityCurrent / durabilityMax) * 100)))
-        : null;
+    const placement = item.placement || {};
+    const footprintW = Number(placement.grid_w || item.definition?.grid_w || 1);
+    const footprintH = Number(placement.grid_h || item.definition?.grid_h || 1);
+    const footprintArea = footprintW * footprintH;
+    const rarity = rarityKey(item);
+    const classes = [
+        'inventory-item',
+        isContainer ? 'is-container-item' : '',
+        assetUrl ? 'has-art' : '',
+        `rarity-${rarity}`,
+        placement.rotated ? 'is-rotated' : '',
+        footprintArea <= 1 ? 'is-tiny' : '',
+        footprintArea <= 2 ? 'is-compact' : '',
+        footprintW > footprintH ? 'is-wide' : '',
+        footprintH > footprintW ? 'is-tall' : '',
+        footprintArea >= 4 ? 'is-large' : '',
+    ].filter(Boolean).join(' ');
 
     return `
-        <div class="inventory-item${isContainer ? ' is-container-item' : ''}" data-item-public-id="${escapeHtml(item.public_id)}">
+        <div class="${classes}" data-item-public-id="${escapeHtml(item.public_id)}" aria-label="${escapeHtml(itemLabel(item))}">
+            ${assetUrl ? `<img class="inventory-item-art" src="${escapeHtml(assetUrl)}" alt="" loading="lazy" onerror="this.closest('.inventory-item')?.classList.add('has-missing-art'); this.remove();">` : ''}
             ${isContainer ? '<span class="inventory-item-badge">Container</span>' : ''}
             <span class="inventory-item-name">${escapeHtml(name)}</span>
-            <span class="inventory-item-meta">
-                <span>${escapeHtml(code)}</span>
-                <span>${quantity > 1 ? `x${quantity}` : ''}</span>
-            </span>
-            ${durabilityPercent !== null ? `<span class="inventory-item-durability" style="--durability-percent:${durabilityPercent}%"></span>` : ''}
+            ${quantity > 1 ? `<span class="inventory-item-quantity">x${quantity}</span>` : ''}
         </div>
     `;
 }
@@ -151,6 +279,275 @@ function renderContainer(container, summaryEntry = null) {
     return section;
 }
 
+function renderEquipment(equipment = [], stats = [], links = [], setBonuses = []) {
+    if (!equipmentRoot) return;
+
+    equipmentRoot.replaceChildren();
+    const equippedCount = equipment.filter((slot) => slot.item).length;
+    equipmentRoot.classList.toggle('is-collapsed', !characterPanelOpen);
+    equipmentRoot.innerHTML = `
+        <header class="inventory-equipment-header">
+            <div>
+                <p class="inventory-kicker">Personagem</p>
+                <h2>Equipamentos</h2>
+            </div>
+            <div class="inventory-equipment-header-actions">
+                <span>${equippedCount}/${equipment.length} slot(s)</span>
+                <button class="inventory-button inventory-equipment-toggle" type="button" data-character-toggle>${characterPanelOpen ? 'Ocultar' : 'Mostrar'} (I)</button>
+            </div>
+        </header>
+        <div class="inventory-character-layout">
+            <div class="inventory-paperdoll">
+                <div class="inventory-character-figure" aria-hidden="true">
+                    <div class="inventory-character-glow"></div>
+                    <div class="inventory-character-head"></div>
+                    <div class="inventory-character-body"></div>
+                    <div class="inventory-character-legs"></div>
+                </div>
+                <svg class="inventory-equipment-links" data-equipment-links aria-hidden="true"></svg>
+                <div class="inventory-equipment-stage" data-equipment-stage></div>
+            </div>
+            <aside class="inventory-character-stats" data-character-stats></aside>
+        </div>
+    `;
+
+    equipmentRoot.querySelector('[data-character-toggle]')?.addEventListener('click', () => toggleCharacterPanel());
+    renderCharacterStats(stats, setBonuses);
+
+    if (!characterPanelOpen) {
+        return;
+    }
+
+    renderEquipmentSlots(equipment);
+    window.requestAnimationFrame(() => renderEquipmentLinks(links));
+}
+
+function renderEquipmentSlots(equipment = []) {
+    const stage = equipmentRoot.querySelector('[data-equipment-stage]');
+    if (!stage) return;
+
+    const byCode = new Map(equipment.map((slot) => [slot.code, slot]));
+    const offhand = ['weapon_offhand', 'shield', 'quiver']
+        .map((code) => byCode.get(code))
+        .find((slot) => slot?.item) || { code: 'offhand', name: 'Offhand', item: null };
+
+    const visualSlots = [
+        byCode.get('pet'),
+        byCode.get('helmet'),
+        byCode.get('wings'),
+        byCode.get('weapon'),
+        byCode.get('chest'),
+        offhand,
+        byCode.get('amulet'),
+        byCode.get('belt'),
+        byCode.get('ring'),
+        byCode.get('ring_2'),
+        byCode.get('gloves'),
+        byCode.get('pants'),
+        byCode.get('boots'),
+    ].filter(Boolean);
+
+    for (const slot of visualSlots) {
+        stage.appendChild(equipmentSlotNode(slot));
+    }
+}
+
+function equipmentSlotNode(slot) {
+    const node = document.createElement('article');
+    const visualCode = ['weapon_offhand', 'shield', 'quiver'].includes(slot.code) ? 'offhand' : slot.code;
+    node.className = `inventory-equipment-slot is-${escapeHtml(visualCode)}${slot.item ? ' has-item' : ''}`;
+    node.dataset.equipmentSlot = slot.code;
+    node.dataset.visualSlot = visualCode;
+
+    if (!slot.item) {
+        node.innerHTML = `
+            <span class="inventory-equipment-slot-name">${escapeHtml(equipmentSlotLabel(slot))}</span>
+            <span class="inventory-equipment-empty">Vazio</span>
+        `;
+        return node;
+    }
+
+    node.innerHTML = `
+        <span class="inventory-equipment-slot-name">${escapeHtml(equipmentSlotLabel(slot))}</span>
+        <div class="inventory-equipment-item-shell">${renderItem(slot.item)}</div>
+    `;
+
+    const itemNode = node.querySelector('.inventory-item');
+    itemNode?.addEventListener('contextmenu', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await openContextMenu(event, slot.item);
+    });
+    itemNode?.addEventListener('dblclick', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await openLinkedContainerForItem(slot.item);
+    });
+
+    if (itemNode && window.tippy) {
+        window.tippy(itemNode, {
+            allowHTML: true,
+            appendTo: () => document.body,
+            content: itemTooltip(slot.item),
+            interactive: true,
+            placement: 'auto',
+            popperOptions: { strategy: 'fixed' },
+            theme: 'evolvaxe-item',
+        });
+    }
+
+    return node;
+}
+
+function visualSlotCode(slotCode) {
+    return ['weapon_offhand', 'shield', 'quiver', 'offhand'].includes(slotCode) ? 'offhand' : slotCode;
+}
+
+function equipmentSlotElement(slotCode) {
+    const escaped = String(slotCode).replace(/"/g, '\\"');
+    const visual = visualSlotCode(slotCode).replace(/"/g, '\\"');
+
+    return equipmentRoot.querySelector(`[data-equipment-slot="${escaped}"]`)
+        || equipmentRoot.querySelector(`[data-visual-slot="${visual}"]`);
+}
+
+function renderEquipmentLinks(links = []) {
+    const svg = equipmentRoot.querySelector('[data-equipment-links]');
+    const paperdoll = equipmentRoot.querySelector('.inventory-paperdoll');
+    if (!svg || !paperdoll) return;
+
+    svg.replaceChildren();
+
+    for (const link of links) {
+        const slots = Array.isArray(link.slots) ? link.slots : [];
+        if (slots.length < 2) continue;
+
+        const points = slots
+            .map((slot) => equipmentSlotElement(slot.slot_code))
+            .filter(Boolean)
+            .map((element) => {
+                const box = element.getBoundingClientRect();
+                const root = paperdoll.getBoundingClientRect();
+                return {
+                    x: box.left - root.left + box.width / 2,
+                    y: box.top - root.top + box.height / 2,
+                };
+            });
+
+        if (points.length < 2) continue;
+
+        const color = /^#[0-9a-f]{6}$/i.test(String(link.aura_color || '')) ? link.aura_color : '#55c58a';
+        for (let index = 0; index < points.length - 1; index += 1) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', String(points[index].x));
+            line.setAttribute('y1', String(points[index].y));
+            line.setAttribute('x2', String(points[index + 1].x));
+            line.setAttribute('y2', String(points[index + 1].y));
+            line.setAttribute('stroke', color);
+            line.setAttribute('class', 'inventory-equipment-link-line');
+            svg.appendChild(line);
+        }
+    }
+}
+
+function equipmentSlotLabel(slot) {
+    const visualCode = ['weapon_offhand', 'shield', 'quiver', 'offhand'].includes(slot.code) ? 'offhand' : slot.code;
+    const labels = {
+        weapon: 'Arma',
+        offhand: 'Secundaria',
+        helmet: 'Elmo',
+        chest: 'Armadura',
+        pants: 'Calca',
+        boots: 'Botas',
+        gloves: 'Luvas',
+        belt: 'Neckle',
+        ring: 'Anel',
+        ring_2: 'Anel',
+        amulet: 'Colar',
+        wings: 'Asa',
+        backpack: 'Mochila',
+        pet: 'Pet',
+        potion_1: 'Pocao',
+        potion_2: 'Pocao',
+        potion_3: 'Pocao',
+    };
+
+    return labels[visualCode] || slot.name;
+}
+
+function renderCharacterStats(stats = [], setBonuses = []) {
+    const root = equipmentRoot?.querySelector('[data-character-stats]');
+    if (!root) return;
+
+    const visibleStats = stats.filter((stat) => Number(stat.value || 0) !== 0);
+    if (!visibleStats.length) {
+        root.innerHTML = '<strong>Status</strong><span class="inventory-character-stat-empty">Sem bonus equipados.</span>';
+        return;
+    }
+
+    const bonusList = setBonuses.length
+        ? `<div class="inventory-set-bonuses">${setBonuses.map((set) => `
+            <section>
+                <strong style="color: ${/^#[0-9a-f]{6}$/i.test(String(set.aura_color || '')) ? escapeHtml(set.aura_color) : '#55c58a'}">${escapeHtml(set.set_name)}</strong>
+                <span>${Number(set.equipped_pieces || 0)} peca(s) vinculada(s)</span>
+                ${(set.bonuses || []).map((bonus) => `<small>${escapeHtml(bonus.description || `${bonus.name} +${bonus.value}${bonus.unit || ''}`)}</small>`).join('')}
+            </section>
+        `).join('')}</div>`
+        : '';
+
+    root.innerHTML = `
+        <strong>Status</strong>
+        ${visibleStats.map((stat) => {
+            const numeric = Number(stat.value || 0);
+            const value = Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+            return `<div class="inventory-character-stat-row"><span>${escapeHtml(stat.name)}</span><b>${escapeHtml(value)}${stat.unit ? escapeHtml(stat.unit) : ''}</b></div>`;
+        }).join('')}
+        ${bonusList}
+    `;
+}
+
+function toggleCharacterPanel() {
+    characterPanelOpen = !characterPanelOpen;
+    persistCharacterPanel();
+    loadInventory();
+}
+
+function renderContainerDock(containers = []) {
+    if (!dockRoot) return;
+
+    const secondary = containers.filter((container) => containerKind(container) !== 'main');
+    if (!secondary.length) {
+        dockRoot.hidden = true;
+        dockRoot.replaceChildren();
+        return;
+    }
+
+    dockRoot.hidden = false;
+    dockRoot.replaceChildren();
+    dockRoot.innerHTML = `
+        <div class="inventory-dock-label">
+            <strong>Armazenamento</strong>
+            <span>Abra mochilas, expedição e entregas quando precisar.</span>
+        </div>
+        <div class="inventory-dock-actions"></div>
+    `;
+
+    const actions = dockRoot.querySelector('.inventory-dock-actions');
+    for (const container of secondary) {
+        const kind = containerKind(container);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `inventory-dock-button is-${kind}${isContainerVisible(container) ? ' is-open' : ''}`;
+        button.dataset.containerPublicId = container.public_id;
+        button.innerHTML = `
+            <span>${escapeHtml(container.name)}</span>
+            <small>${escapeHtml(container.definition_code)} - ${Number(container.grid.columns)}x${Number(container.grid.rows)}</small>
+        `;
+        button.addEventListener('click', () => toggleContainer(container));
+        actions.appendChild(button);
+    }
+}
+
 function findGridUnderPointer(clientX, clientY) {
     for (const [containerPublicId, grid] of grids) {
         if (!grid?.el) continue;
@@ -172,6 +569,15 @@ function clearAllGhostPreviews() {
         ghost.replaceChildren();
         ghost.classList.remove('is-valid', 'is-invalid', 'is-merge', 'is-deposit');
     }
+}
+
+function cleanupDragUi() {
+    clearAllGhostPreviews();
+    document.querySelectorAll('.grid-stack-placeholder').forEach((placeholder) => placeholder.remove());
+    document
+        .querySelectorAll('.inventory-placement-valid, .inventory-placement-invalid, .inventory-placement-merge, .inventory-placement-deposit, .inventory-rotated-preview')
+        .forEach((element) => clearPlacementHint(element));
+    document.querySelectorAll('.inventory-rotation-helper').forEach((element) => clearRotationHelper(element));
 }
 
 function findOverlappingPlacements(snapshot, x, y, w, h) {
@@ -354,7 +760,10 @@ function updateAllGhostPreviews(clientX, clientY) {
     if (!container || !current) return;
 
     const size = dimensionsForState(current.item, current.rotated);
-    const pointerCoords = activeDrag.pointerX != null && activeDrag.pointerY != null
+    const useRotationAnchor = activeDrag.rotationAnchor
+        && activeDrag.rotationAnchor.containerPublicId === hover.containerPublicId
+        && !hasPointerMovedFromRotationAnchor(clientX, clientY);
+    const pointerCoords = !useRotationAnchor && activeDrag.pointerX != null && activeDrag.pointerY != null
         ? { clientX: activeDrag.pointerX, clientY: activeDrag.pointerY }
         : null;
     const cell = pointerCoords
@@ -368,8 +777,8 @@ function updateAllGhostPreviews(clientX, clientY) {
             Number(container.grid.rows || 0)
         )
         : {
-            x: Math.round(Number(dragged?.node?.x || activeDrag.hoverX || 0)),
-            y: Math.round(Number(dragged?.node?.y || activeDrag.hoverY || 0)),
+            x: Math.round(Number(activeDrag.hoverX ?? dragged?.node?.x ?? 0)),
+            y: Math.round(Number(activeDrag.hoverY ?? dragged?.node?.y ?? 0)),
         };
 
     activeDrag.hoverContainerPublicId = hover.containerPublicId;
@@ -476,6 +885,9 @@ function onDocumentDragPointer(event) {
 
     activeDrag.pointerX = event.clientX;
     activeDrag.pointerY = event.clientY;
+    if (activeDrag.rotationAnchor && hasPointerMovedFromRotationAnchor(event.clientX, event.clientY)) {
+        activeDrag.rotationAnchor = null;
+    }
 
     if (syncHoverFromPointer(event.clientX, event.clientY)) {
         updateAllGhostPreviews(event.clientX, event.clientY);
@@ -483,6 +895,7 @@ function onDocumentDragPointer(event) {
 
     const dragged = findDraggedWidget();
     if (dragged?.element) {
+        enforceDraggedFootprint(dragged);
         updatePlacementHint(dragged.element);
     }
 }
@@ -493,7 +906,8 @@ function beginDragSession() {
 
 function endDragSession() {
     document.removeEventListener('mousemove', onDocumentDragPointer);
-    clearAllGhostPreviews();
+    unlockStaticNodesForDrag();
+    cleanupDragUi();
 }
 
 function destroyGrids() {
@@ -549,6 +963,20 @@ function gridCellFromPointer(gridEl, clientX, clientY, footprintW, footprintH, c
     };
 }
 
+function clampCell(x, y, width, height, columns, rows) {
+    return {
+        x: Math.max(0, Math.min(Math.round(Number(x || 0)), Math.max(0, columns - width))),
+        y: Math.max(0, Math.min(Math.round(Number(y || 0)), Math.max(0, rows - height))),
+    };
+}
+
+function hasPointerMovedFromRotationAnchor(clientX, clientY) {
+    if (!activeDrag?.rotationAnchor) return true;
+
+    return Math.abs(Number(clientX) - Number(activeDrag.rotationAnchor.clientX)) > 2
+        || Math.abs(Number(clientY) - Number(activeDrag.rotationAnchor.clientY)) > 2;
+}
+
 function syncHoverFromPointer(clientX, clientY) {
     if (!activeDrag) return false;
 
@@ -559,6 +987,13 @@ function syncHoverFromPointer(clientX, clientY) {
     const current = itemIndex.get(activeDrag.itemPublicId);
     if (!container || !current || !hover.grid?.el) return false;
     if (!isPointerInsideElement(hover.grid.el, clientX, clientY)) return false;
+    if (
+        activeDrag.rotationAnchor
+        && activeDrag.rotationAnchor.containerPublicId === hover.containerPublicId
+        && !hasPointerMovedFromRotationAnchor(clientX, clientY)
+    ) {
+        return true;
+    }
 
     const size = dimensionsForState(current.item, current.rotated);
     const cell = gridCellFromPointer(
@@ -810,6 +1245,58 @@ function clearPlacementHint(element) {
     );
 }
 
+function clearRotationHelper(element) {
+    element?.classList.remove('inventory-rotation-helper');
+    element?.style.removeProperty('--inventory-rotation-w');
+    element?.style.removeProperty('--inventory-rotation-h');
+}
+
+function applyRotationHelper(itemPublicId, width, height) {
+    const selector = `.grid-stack-item.ui-draggable-dragging[gs-id="${String(itemPublicId).replace(/"/g, '\\"')}"]`;
+    const elements = document.querySelectorAll(selector);
+
+    elements.forEach((element) => {
+        element.style.setProperty('--inventory-rotation-w', String(width));
+        element.style.setProperty('--inventory-rotation-h', String(height));
+        element.classList.add('inventory-rotation-helper');
+    });
+}
+
+function enforceDraggedFootprint(dragged = null) {
+    if (!activeDrag?.itemPublicId) return;
+
+    const widget = dragged || findDraggedWidget();
+    if (!widget?.node?.el || !widget.grid) return;
+
+    const current = itemIndex.get(activeDrag.itemPublicId);
+    if (!current) return;
+
+    const size = dimensionsForState(current.item, Boolean(current.rotated));
+    const node = widget.node;
+    if (Number(node.w || 1) === size.w && Number(node.h || 1) === size.h) {
+        if (node.el.classList.contains('ui-draggable-dragging')) {
+            applyRotationHelper(activeDrag.itemPublicId, size.w, size.h);
+        }
+        return;
+    }
+
+    const originalDragPosition = node._orig;
+    silent = true;
+    widget.grid.update(node.el, {
+        w: size.w,
+        h: size.h,
+    });
+    if (originalDragPosition) {
+        node._orig = originalDragPosition;
+    }
+    silent = false;
+
+    if (node.el.classList.contains('ui-draggable-dragging')) {
+        applyRotationHelper(activeDrag.itemPublicId, size.w, size.h);
+        window.requestAnimationFrame(() => applyRotationHelper(activeDrag.itemPublicId, size.w, size.h));
+    }
+}
+
 function updatePlacementHint(element) {
     const node = element?.gridstackNode;
     if (!node?.id || !activeDrag) return;
@@ -822,7 +1309,12 @@ function updatePlacementHint(element) {
 
     const size = dimensionsForState(current.item, current.rotated);
     const container = containerIndex.get(located.containerPublicId);
-    const pointerCell = activeDrag.pointerX != null && activeDrag.pointerY != null && located.grid.el && container
+    const useRotationAnchor = activeDrag.rotationAnchor
+        && activeDrag.rotationAnchor.containerPublicId === located.containerPublicId
+        && activeDrag.pointerX != null
+        && activeDrag.pointerY != null
+        && !hasPointerMovedFromRotationAnchor(activeDrag.pointerX, activeDrag.pointerY);
+    const pointerCell = !useRotationAnchor && activeDrag.pointerX != null && activeDrag.pointerY != null && located.grid.el && container
         ? gridCellFromPointer(
             located.grid.el,
             activeDrag.pointerX,
@@ -833,8 +1325,8 @@ function updatePlacementHint(element) {
             Number(container.grid.rows || 0)
         )
         : null;
-    const x = pointerCell ? pointerCell.x : Math.round(Number(node.x ?? 0));
-    const y = pointerCell ? pointerCell.y : Math.round(Number(node.y ?? 0));
+    const x = pointerCell ? pointerCell.x : Math.round(Number(activeDrag.hoverX ?? node.x ?? 0));
+    const y = pointerCell ? pointerCell.y : Math.round(Number(activeDrag.hoverY ?? node.y ?? 0));
     activeDrag.lastX = x;
     activeDrag.lastY = y;
 
@@ -884,6 +1376,8 @@ function revertItem(itemPublicId) {
     const current = itemIndex.get(itemPublicId);
     if (!snapshot || !current) return;
 
+    cleanupDragUi();
+
     const grid = grids.get(snapshot.container_public_id);
     const node = grid?.engine.nodes.find((entry) => entry.id === itemPublicId);
     if (!grid || !node?.el) {
@@ -912,7 +1406,10 @@ function rotateDraggedItem() {
     const dragged = findDraggedWidget();
     if (!dragged?.node?.el || !dragged.grid) return;
 
-    const current = itemIndex.get(activeDrag.itemPublicId);
+    const movingItemPublicId = dragged.node.id || activeDrag.itemPublicId;
+    activeDrag.itemPublicId = movingItemPublicId;
+
+    const current = itemIndex.get(movingItemPublicId);
     if (!current) return;
 
     const base = baseDimensions(current.item);
@@ -921,21 +1418,130 @@ function rotateDraggedItem() {
         return;
     }
 
-    let relative;
-    if (activeDrag.pointerX != null && activeDrag.pointerY != null && dragged.element) {
-        const rect = dragged.element.getBoundingClientRect();
-        relative = {
-            left: activeDrag.pointerX - rect.left,
-            top: activeDrag.pointerY - rect.top,
-        };
+    const nextRotated = !Boolean(current.rotated);
+    const nextSize = dimensionsForState(current.item, nextRotated);
+    const container = containerIndex.get(dragged.containerPublicId);
+    const columns = Number(container?.grid?.columns || 0);
+    const rows = Number(container?.grid?.rows || 0);
+    const currentX = Math.round(Number(dragged.node.x ?? activeDrag.lastX ?? 0));
+    const currentY = Math.round(Number(dragged.node.y ?? activeDrag.lastY ?? 0));
+    const currentSize = dimensionsForState(current.item, Boolean(current.rotated));
+    const candidates = [];
+
+    const pushCandidate = (x, y) => {
+        if (!container || columns <= 0 || rows <= 0) return;
+        const cell = clampCell(x, y, nextSize.w, nextSize.h, columns, rows);
+        if (!candidates.some((candidate) => candidate.x === cell.x && candidate.y === cell.y)) {
+            candidates.push(cell);
+        }
+    };
+
+    if (container && activeDrag.pointerX != null && activeDrag.pointerY != null && dragged.grid?.el) {
+        const pointerCell = gridCellFromPointer(
+            dragged.grid.el,
+            activeDrag.pointerX,
+            activeDrag.pointerY,
+            nextSize.w,
+            nextSize.h,
+            columns,
+            rows
+        );
+        pushCandidate(pointerCell.x, pointerCell.y);
+    }
+
+    pushCandidate(
+        currentX + Math.round((currentSize.w - nextSize.w) / 2),
+        currentY + Math.round((currentSize.h - nextSize.h) / 2)
+    );
+    pushCandidate(currentX, currentY);
+    pushCandidate(currentX - (nextSize.w - currentSize.w), currentY);
+    pushCandidate(currentX, currentY - (nextSize.h - currentSize.h));
+    pushCandidate(activeDrag.hoverX ?? currentX, activeDrag.hoverY ?? currentY);
+
+    for (let radius = 1; radius <= 2; radius += 1) {
+        pushCandidate(currentX - radius, currentY);
+        pushCandidate(currentX + radius, currentY);
+        pushCandidate(currentX, currentY - radius);
+        pushCandidate(currentX, currentY + radius);
+        pushCandidate(currentX - radius, currentY - radius);
+        pushCandidate(currentX + radius, currentY - radius);
+        pushCandidate(currentX - radius, currentY + radius);
+        pushCandidate(currentX + radius, currentY + radius);
+    }
+
+    if (container && columns > 0 && rows > 0) {
+        const originX = activeDrag.pointerX != null && dragged.grid?.el
+            ? Math.floor((activeDrag.pointerX - dragged.grid.el.getBoundingClientRect().left) / CELL_SIZE)
+            : currentX + Math.floor(currentSize.w / 2);
+        const originY = activeDrag.pointerY != null && dragged.grid?.el
+            ? Math.floor((activeDrag.pointerY - dragged.grid.el.getBoundingClientRect().top) / CELL_SIZE)
+            : currentY + Math.floor(currentSize.h / 2);
+        const allCells = [];
+
+        for (let y = 0; y <= rows - nextSize.h; y += 1) {
+            for (let x = 0; x <= columns - nextSize.w; x += 1) {
+                allCells.push({
+                    x,
+                    y,
+                    distance: Math.abs(x - originX) + Math.abs(y - originY),
+                });
+            }
+        }
+
+        allCells
+            .sort((a, b) => a.distance - b.distance || a.y - b.y || a.x - b.x)
+            .forEach((cell) => pushCandidate(cell.x, cell.y));
+    }
+
+    const snapshot = snapshotNodes(dragged.grid, movingItemPublicId);
+    const nextCell = candidates.find((candidate) => isPlacementValidAgainstSnapshot(
+        dragged.containerPublicId,
+        snapshot,
+        candidate.x,
+        candidate.y,
+        nextSize.w,
+        nextSize.h
+    ));
+
+    if (!nextCell) {
+        applyPlacementHintClasses(dragged.element, 'invalid', Boolean(current.rotated));
+        toast('Sem espaco livre para rotacionar aqui.', 'warning', 2400);
+        return;
     }
 
     silent = true;
-    dragged.grid.rotate(dragged.node.el, relative);
+    restoreOtherNodes(dragged.grid, movingItemPublicId);
+    const originalDragPosition = dragged.node._orig;
+    dragged.grid.update(dragged.node.el, {
+        x: nextCell.x,
+        y: nextCell.y,
+        w: nextSize.w,
+        h: nextSize.h,
+    });
+    if (originalDragPosition) {
+        dragged.node._orig = originalDragPosition;
+    }
+    applyRotationHelper(movingItemPublicId, nextSize.w, nextSize.h);
+    window.requestAnimationFrame(() => applyRotationHelper(movingItemPublicId, nextSize.w, nextSize.h));
     silent = false;
 
-    syncRotatedStateFromNode(current, dragged.node);
-    activeDrag.rotated = Boolean(current.rotated);
+    current.rotated = nextRotated;
+    current.grid_w = nextSize.w;
+    current.grid_h = nextSize.h;
+    activeDrag.rotated = nextRotated;
+    activeDrag.lastX = nextCell.x;
+    activeDrag.lastY = nextCell.y;
+    activeDrag.hoverX = nextCell.x;
+    activeDrag.hoverY = nextCell.y;
+    activeDrag.hoverContainerPublicId = dragged.containerPublicId;
+    activeDrag.hoverGrid = dragged.grid;
+    activeDrag.rotationAnchor = activeDrag.pointerX != null && activeDrag.pointerY != null
+        ? {
+            clientX: activeDrag.pointerX,
+            clientY: activeDrag.pointerY,
+            containerPublicId: dragged.containerPublicId,
+        }
+        : null;
     activeDrag.targetSnapshots.clear();
 
     if (activeDrag.pointerX != null && activeDrag.pointerY != null) {
@@ -943,7 +1549,7 @@ function rotateDraggedItem() {
         updateAllGhostPreviews(activeDrag.pointerX, activeDrag.pointerY);
     }
 
-    applyPlacementHintClasses(dragged.element, activeDrag.hoverState || 'valid', Boolean(current.rotated));
+    updatePlacementHint(dragged.element);
 }
 
 function hasPlacementChanged(snapshot, interaction) {
@@ -955,6 +1561,47 @@ function hasPlacementChanged(snapshot, interaction) {
 
 function clearActiveDrag() {
     activeDrag = null;
+}
+
+function lockStaticNodesForDrag() {
+    if (!activeDrag) return;
+
+    activeDrag.lockedNodes = [];
+
+    for (const [containerPublicId, grid] of grids) {
+        for (const node of grid.engine.nodes) {
+            if (!node?.id || node.id === activeDrag.itemPublicId) continue;
+
+            activeDrag.lockedNodes.push({
+                containerPublicId,
+                id: node.id,
+                locked: Boolean(node.locked),
+            });
+            node.locked = true;
+            node.el?.setAttribute('gs-locked', 'true');
+        }
+    }
+}
+
+function unlockStaticNodesForDrag() {
+    const lockedNodes = activeDrag?.lockedNodes || [];
+
+    for (const locked of lockedNodes) {
+        const grid = grids.get(locked.containerPublicId);
+        const node = grid?.engine.nodes.find((entry) => entry.id === locked.id);
+        if (!node) continue;
+
+        node.locked = locked.locked;
+        if (locked.locked) {
+            node.el?.setAttribute('gs-locked', 'true');
+        } else {
+            node.el?.removeAttribute('gs-locked');
+        }
+    }
+
+    if (activeDrag) {
+        activeDrag.lockedNodes = [];
+    }
 }
 
 function pointerCellForDrag(containerPublicId, coords = null) {
@@ -1369,8 +2016,10 @@ function initializeGrid(container, gridNode) {
             depositRotated: null,
             rotated: Boolean(current.rotated),
             handled: false,
+            lockedNodes: [],
         };
 
+        lockStaticNodesForDrag();
         beginDragSession();
     });
 
@@ -1393,6 +2042,7 @@ function initializeGrid(container, gridNode) {
             updateAllGhostPreviews(coords.clientX, coords.clientY);
         }
 
+        enforceDraggedFootprint({ containerPublicId: container.public_id, grid, node, element });
         updatePlacementHint(element);
     });
 
@@ -1418,13 +2068,12 @@ function initializeGrid(container, gridNode) {
         if (!node?.id || !activeDrag || node.id !== activeDrag.itemPublicId) return;
 
         const coords = dragPointerCoords(event);
-        const current = itemIndex.get(node.id);
 
         if (coords) {
             syncHoverFromPointer(coords.clientX, coords.clientY);
         }
 
-        syncRotatedStateFromNode(current, node);
+        enforceDraggedFootprint({ containerPublicId: container.public_id, grid, node, element });
 
         try {
             endDragSession();
@@ -1498,12 +2147,13 @@ function positionContextMenu(menu, clientX, clientY) {
 
 function renderContextMenu(menu, item, actions) {
     menu.replaceChildren();
+    menu.className = `inventory-context-menu rarity-${rarityKey(item)}`;
 
     const header = document.createElement('div');
     header.className = 'inventory-context-menu-header';
     header.innerHTML = `
         <strong>${escapeHtml(itemLabel(item))}</strong>
-        <span>${escapeHtml(item.definition?.code || '')}</span>
+        <span>${escapeHtml(rarityLabel(item))} - ${escapeHtml(item.definition?.code || '')}</span>
     `;
     menu.appendChild(header);
 
@@ -1590,6 +2240,16 @@ function highlightItem(itemPublicId) {
     window.setTimeout(() => widget.classList.remove('inventory-item-highlight'), 1800);
 }
 
+async function openLinkedContainerForItem(item) {
+    const linked = item?.linked_container || itemIndex.get(item?.public_id)?.linked_container || null;
+    if (!linked?.public_id) return false;
+
+    openContainer(linked.public_id);
+    await loadInventory();
+    highlightContainer(linked.public_id);
+    return true;
+}
+
 function bindContainerLinks() {
     for (const section of document.querySelectorAll('.inventory-container-physical[data-source-item-public-id]')) {
         const sourceItemPublicId = section.dataset.sourceItemPublicId;
@@ -1609,10 +2269,7 @@ function bindContainerLinks() {
         content.addEventListener('dblclick', (event) => {
             event.preventDefault();
             event.stopPropagation();
-            const linkedSection = document.querySelector(`.inventory-container-physical[data-source-item-public-id="${itemPublicId}"]`);
-            if (linkedSection) {
-                highlightContainer(linkedSection.dataset.containerPublicId);
-            }
+            openLinkedContainerForItem(itemIndex.get(itemPublicId)?.item || null);
         });
     }
 }
@@ -1622,7 +2279,8 @@ function renderSummary(summary) {
 
     const containers = summary?.containers?.length || 0;
     const items = summary?.item_count || 0;
-    summaryNode.textContent = `${containers} containers · ${items} itens`;
+    const equipped = summary?.equipped_item_count || 0;
+    summaryNode.textContent = `${containers} containers · ${items} itens · ${equipped} equipado(s)`;
 }
 
 function inspectSummary(data) {
@@ -1672,6 +2330,7 @@ async function executeItemAction(item, action) {
         if (data.action === 'OPEN') {
             toast(`Container aberto: ${data.container_name || data.container_definition_code}`, 'success', 3200);
             setStatus('Sincronizado');
+            openContainer(data.container_public_id);
             await loadInventory();
             highlightContainer(data.container_public_id);
             return;
@@ -1705,6 +2364,7 @@ function addItems(container, grid) {
             grid_w: size.w,
             grid_h: size.h,
             rotated,
+            linked_container: item.linked_container || null,
             item,
         });
 
@@ -1728,8 +2388,14 @@ function addItems(container, grid) {
             window.tippy(content, {
                 allowHTML: true,
                 content: itemTooltip(item),
-                theme: 'translucent',
-                placement: 'top',
+                theme: 'evolvaxe-item',
+                placement: 'auto',
+                interactive: true,
+                appendTo: () => document.body,
+                popperOptions: {
+                    strategy: 'fixed',
+                },
+                delay: [180, 80],
             });
         }
     }
@@ -1865,21 +2531,28 @@ async function loadInventory() {
             apiFetch('/api/inventory/summary').catch(() => null),
         ]);
         const containers = response.data?.containers || [];
+        const equipment = response.data?.equipment || [];
+        const characterStats = response.data?.character_stats || [];
+        const equipmentLinks = response.data?.equipment_links || [];
+        const activeSetBonuses = response.data?.active_set_bonuses || [];
+        const visibleContainers = containers.filter(isContainerVisible);
         const summaryByPublicId = new Map(
             (summaryResponse?.data?.containers || []).map((entry) => [entry.public_id, entry])
         );
 
         destroyGrids();
         containerRoot.textContent = '';
+        renderEquipment(equipment, characterStats, equipmentLinks, activeSetBonuses);
+        renderContainerDock(containers);
         renderSummary(summaryResponse?.data || null);
 
-        if (!containers.length) {
+        if (!visibleContainers.length) {
             containerRoot.innerHTML = '<div class="inventory-empty">Nenhum container encontrado.</div>';
             setStatus('Vazio');
             return;
         }
 
-        for (const container of containers) {
+        for (const container of visibleContainers) {
             containerIndex.set(container.public_id, container);
             const section = renderContainer(container, summaryByPublicId.get(container.public_id) || null);
             containerRoot.appendChild(section);
@@ -1914,6 +2587,17 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'r' || event.key === 'R' || event.key === 'q' || event.key === 'Q') {
         event.preventDefault();
         rotateDraggedItem();
+    }
+});
+
+document.addEventListener('keydown', (event) => {
+    const target = event.target;
+    const isTyping = target instanceof HTMLElement
+        && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+    if (isTyping || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'i' || event.key === 'I') {
+        event.preventDefault();
+        toggleCharacterPanel();
     }
 });
 

@@ -142,6 +142,16 @@ class InventoryPlacementValidationTest extends TestCase
         $this->assertSame($targetContainerId, $actualContainerId);
     }
 
+    public function testMarketDeliveryRejectsDepositsOutsideMainInventory(): void
+    {
+        $this->createPlacedItem('wood', 'wood-in-backpack', 'small_backpack', 0, 0, 1, 1);
+
+        $this->assertInventoryException(
+            fn (): array => $this->moveByPublicId('wood-in-backpack', 'small_backpack', 'market_delivery', 0, 0, 1),
+            'INVENTORY_MARKET_DELIVERY_SOURCE_RESTRICTED'
+        );
+    }
+
     public function testExpeditionCarryAcceptsMvpLootMaterials(): void
     {
         $result = $this->move('wood', 'main_inventory_level_1', 'expedition_carry', 0, 0, 1);

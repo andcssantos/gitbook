@@ -3,6 +3,7 @@
 namespace App\Game\Items\Services;
 
 use App\Game\Containers\Repositories\ContainerRepository;
+use App\Game\Equipment\Services\EquipmentService;
 use App\Game\Inventory\InventoryException;
 use App\Game\Items\Repositories\ItemActionDefinitionRepository;
 use App\Game\Items\Repositories\ItemInstanceRepository;
@@ -13,7 +14,7 @@ use Throwable;
 
 class ItemActionExecuteService
 {
-    private const MVP_EXECUTABLE = ['DISCARD', 'INSPECT', 'OPEN'];
+    private const MVP_EXECUTABLE = ['DISCARD', 'INSPECT', 'OPEN', 'EQUIP', 'UNEQUIP'];
 
     public function __construct(
         private ?PDO $pdo = null,
@@ -52,6 +53,8 @@ class ItemActionExecuteService
                 'DISCARD' => $this->discard($item),
                 'INSPECT' => $this->inspect($item),
                 'OPEN' => $this->open($item),
+                'EQUIP' => (new EquipmentService($this->pdo()))->equip($playerId, $itemPublicId),
+                'UNEQUIP' => (new EquipmentService($this->pdo()))->unequip($playerId, $itemPublicId),
             };
         });
     }
