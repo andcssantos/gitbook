@@ -6,6 +6,7 @@ use App\Game\Equipment\Services\EquipmentService;
 use App\Game\Inventory\DTO\MoveItemRequest;
 use App\Game\Inventory\InventoryException;
 use App\Game\Inventory\Services\InventoryMoveService;
+use App\Game\Inventory\Services\InventoryStateService;
 use App\Game\Inventory\Services\StarterInventoryService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -38,12 +39,39 @@ class EquipmentServiceTest extends TestCase
         $result = (new EquipmentService($this->pdo))->equip(1, $this->itemPublicId('small_leather_backpack'));
 
         $this->assertSame('backpack', $result['slot_code']);
-        $this->assertSame(4, $result['expedition_carry']['grid_columns']);
+        $this->assertSame(6, $result['expedition_carry']['grid_columns']);
         $this->assertSame(4, $result['expedition_carry']['grid_rows']);
-        $this->assertSame(['columns' => 4, 'rows' => 4], $this->containerGrid('expedition_carry'));
+        $this->assertSame(2, $result['expedition_carry']['pocket_columns']);
+        $this->assertSame(4, $result['expedition_carry']['backpack_columns']);
+        $this->assertSame(['columns' => 6, 'rows' => 4], $this->containerGrid('expedition_carry'));
     }
 
-    public function testBackpackCannotBeUnequippedWhileExpeditionCarryHasItems(): void
+    public function testBackpackUnequipTransfersExpeditionCarryIntoLinkedContainer(): void
+    {
+        (new EquipmentService($this->pdo))->equip(1, $this->itemPublicId('small_leather_backpack'));
+
+        (new InventoryMoveService($this->pdo))->move(new MoveItemRequest(
+            1,
+            $this->itemPublicId('wood'),
+            $this->containerPublicId('main_inventory_level_1'),
+            $this->containerPublicId('expedition_carry'),
+            2,
+            0,
+            false,
+            1
+        ));
+
+        $result = (new EquipmentService($this->pdo))->unequip(1, $this->itemPublicId('small_leather_backpack'));
+
+        $this->assertSame('UNEQUIP', $result['action']);
+        $this->assertSame(['columns' => 2, 'rows' => 2], $this->containerGrid('expedition_carry'));
+
+        $backpackContainerId = (int) $this->pdo->query("SELECT ci.id FROM container_instances ci INNER JOIN item_instances ii ON ii.id = ci.source_item_instance_id WHERE ii.public_id = " . $this->pdo->quote($this->itemPublicId('small_leather_backpack')) . " LIMIT 1")->fetchColumn();
+        $count = (int) $this->pdo->query('SELECT COUNT(*) FROM container_items WHERE container_instance_id = ' . $backpackContainerId)->fetchColumn();
+        $this->assertSame(1, $count);
+    }
+
+    public function testBackpackUnequipKeepsPocketItemsInExpeditionCarry(): void
     {
         (new EquipmentService($this->pdo))->equip(1, $this->itemPublicId('small_leather_backpack'));
 
@@ -58,10 +86,10 @@ class EquipmentServiceTest extends TestCase
             1
         ));
 
-        $this->assertInventoryException(
-            fn (): array => (new EquipmentService($this->pdo))->unequip(1, $this->itemPublicId('small_leather_backpack')),
-            'EQUIPMENT_BACKPACK_EXPEDITION_CARRY_NOT_EMPTY'
-        );
+        (new EquipmentService($this->pdo))->unequip(1, $this->itemPublicId('small_leather_backpack'));
+
+        $expeditionCount = (int) $this->pdo->query("SELECT COUNT(*) FROM container_items ci INNER JOIN container_instances c ON c.id = ci.container_instance_id INNER JOIN container_definitions cd ON cd.id = c.container_definition_id WHERE cd.code = 'expedition_carry' AND c.owner_player_id = 1")->fetchColumn();
+        $this->assertSame(1, $expeditionCount);
     }
 
     public function testUnequippingEmptyBackpackRestoresExpeditionCarryDefaultCapacity(): void
@@ -71,9 +99,31 @@ class EquipmentServiceTest extends TestCase
         $result = (new EquipmentService($this->pdo))->unequip(1, $this->itemPublicId('small_leather_backpack'));
 
         $this->assertSame('UNEQUIP', $result['action']);
-        $this->assertSame(8, $result['expedition_carry']['grid_columns']);
-        $this->assertSame(5, $result['expedition_carry']['grid_rows']);
-        $this->assertSame(['columns' => 8, 'rows' => 5], $this->containerGrid('expedition_carry'));
+        $this->assertSame(2, $result['expedition_carry']['grid_columns']);
+        $this->assertSame(2, $result['expedition_carry']['grid_rows']);
+        $this->assertSame(['columns' => 2, 'rows' => 2], $this->containerGrid('expedition_carry'));
+    }
+
+    public function testNewPlayerStartsWithBaselineExpeditionCarryCapacity(): void
+    {
+        $this->assertSame(['columns' => 2, 'rows' => 2], $this->containerGrid('expedition_carry'));
+    }
+
+    public function testPreEquippedBackpackSyncsExpeditionCarryOnInventoryLoad(): void
+    {
+        $backpackPublicId = $this->itemPublicId('small_leather_backpack');
+        $backpackItemId = $this->itemInstanceId($backpackPublicId);
+        $backpackSlotId = $this->equipmentSlotId('backpack');
+
+        $this->pdo->prepare('INSERT INTO player_equipment (player_id, equipment_slot_id, item_instance_id) VALUES (1, :slot_id, :item_id)')
+            ->execute([
+                'slot_id' => $backpackSlotId,
+                'item_id' => $backpackItemId,
+            ]);
+
+        (new InventoryStateService($this->pdo))->forPlayer(1);
+
+        $this->assertSame(['columns' => 6, 'rows' => 4], $this->containerGrid('expedition_carry'));
     }
 
     public function testTwoHandedWeaponRequiresFreeOffhandSlots(): void
@@ -148,6 +198,45 @@ class EquipmentServiceTest extends TestCase
         $this->assertSame('potion_1', $result['slot_code']);
     }
 
+    public function testUnequipSucceedsWhenStaleContainerPlacementExists(): void
+    {
+        $ring = $this->createItem('test_stale_ring', 'Stale Ring', 'armor', 'ring');
+
+        (new EquipmentService($this->pdo))->equip(1, $ring);
+
+        $itemId = $this->itemInstanceId($ring);
+        $containerId = $this->containerInstanceId('main_inventory_level_1');
+
+        $this->pdo->prepare('INSERT INTO container_items (
+            container_instance_id,
+            item_instance_id,
+            grid_x,
+            grid_y,
+            grid_w,
+            grid_h,
+            rotated,
+            locked
+        ) VALUES (
+            :container_instance_id,
+            :item_instance_id,
+            0,
+            0,
+            1,
+            1,
+            0,
+            0
+        )')->execute([
+            'container_instance_id' => $containerId,
+            'item_instance_id' => $itemId,
+        ]);
+
+        $result = (new EquipmentService($this->pdo))->unequip(1, $ring);
+
+        $this->assertSame('UNEQUIP', $result['action']);
+        $this->assertArrayHasKey('placement', $result);
+        $this->assertSame(1, $this->placementCountForItem($itemId));
+    }
+
     private function createPlayer(int $accountId, string $playerPublicId, string $name): void
     {
         $this->pdo->prepare('INSERT INTO accounts (id, public_id, display_name, email, password_hash, status) VALUES (:id, :public_id, :display_name, :email, :password_hash, :status)')
@@ -183,6 +272,38 @@ class EquipmentServiceTest extends TestCase
         $stmt->execute(['code' => $code]);
 
         return (string) $stmt->fetchColumn();
+    }
+
+    private function containerInstanceId(string $code): int
+    {
+        $stmt = $this->pdo->prepare('SELECT ci.id FROM container_instances ci INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id WHERE cd.code = :code AND ci.owner_player_id = 1 LIMIT 1');
+        $stmt->execute(['code' => $code]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    private function itemInstanceId(string $publicId): int
+    {
+        $stmt = $this->pdo->prepare('SELECT id FROM item_instances WHERE public_id = :public_id LIMIT 1');
+        $stmt->execute(['public_id' => $publicId]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    private function equipmentSlotId(string $code): int
+    {
+        $stmt = $this->pdo->prepare('SELECT id FROM equipment_slots WHERE code = :code LIMIT 1');
+        $stmt->execute(['code' => $code]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    private function placementCountForItem(int $itemInstanceId): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM container_items WHERE item_instance_id = :item_instance_id');
+        $stmt->execute(['item_instance_id' => $itemInstanceId]);
+
+        return (int) $stmt->fetchColumn();
     }
 
     private function containerGrid(string $code): array

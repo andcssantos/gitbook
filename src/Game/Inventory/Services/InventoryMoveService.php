@@ -4,6 +4,7 @@ namespace App\Game\Inventory\Services;
 
 use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Containers\Services\ContainerAcceptanceService;
+use App\Game\Containers\Services\ContainerNestingService;
 use App\Game\Inventory\DTO\MoveItemRequest;
 use App\Game\Inventory\InventoryException;
 use App\Game\Inventory\Validators\MoveItemValidator;
@@ -38,7 +39,10 @@ class InventoryMoveService
             }
 
             $targetPlacements = $containers->listPlacements((int) $targetContainer['id'], true);
-            $size = (new InventoryPlacementValidator(new ContainerAcceptanceService(null, $this->pdo())))->validateMove(
+            $size = (new InventoryPlacementValidator(
+                new ContainerAcceptanceService(null, $this->pdo()),
+                new ContainerNestingService($this->pdo())
+            ))->validateMove(
                 $item,
                 $sourceContainer,
                 $targetContainer,
@@ -115,19 +119,28 @@ class InventoryMoveService
 
     private function validateContainerFlow(array $sourceContainer, array $targetContainer): void
     {
-        if ((string) ($targetContainer['container_type'] ?? '') !== 'MARKET_DELIVERY') {
+        if ((int) ($sourceContainer['id'] ?? 0) === (int) ($targetContainer['id'] ?? 0)) {
             return;
         }
 
-        if ((string) ($sourceContainer['container_type'] ?? '') === 'MAIN_INVENTORY') {
+        $sourceType = (string) ($sourceContainer['container_type'] ?? '');
+        $targetType = (string) ($targetContainer['container_type'] ?? '');
+
+        if ($targetType === 'MARKET_DELIVERY' && $sourceType === 'MAIN_INVENTORY') {
             return;
         }
 
-        throw new InventoryException(
-            'INVENTORY_MARKET_DELIVERY_SOURCE_RESTRICTED',
-            'Market delivery only accepts deposits from the main inventory.',
-            422
-        );
+        if ($targetType === 'MARKET_DELIVERY') {
+            throw new InventoryException(
+                'INVENTORY_MARKET_DELIVERY_SOURCE_RESTRICTED',
+                'Market delivery only accepts deposits from the main inventory.',
+                422
+            );
+        }
+
+        if ($sourceType === 'MARKET_DELIVERY' && $targetType === 'MAIN_INVENTORY') {
+            return;
+        }
     }
 
     private function loadOwnedContainer(ContainerRepository $containers, string $publicId, int $playerId, string $notFoundCode): array

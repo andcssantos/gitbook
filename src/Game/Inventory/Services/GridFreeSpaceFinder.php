@@ -11,10 +11,14 @@ class GridFreeSpaceFinder
         $this->validator ??= new InventoryPlacementValidator();
     }
 
-    public function findFirst(array $item, array $container, array $placements): ?array
+    public function findFirst(array $item, array $container, array $placements, bool $rotated = false): ?array
     {
         $width = (int) $item['definition_grid_w'];
         $height = (int) $item['definition_grid_h'];
+        if ($rotated) {
+            [$width, $height] = [$height, $width];
+        }
+
         $maxY = (int) $container['grid_rows'] - $height;
         $maxX = (int) $container['grid_columns'] - $width;
 
@@ -24,7 +28,7 @@ class GridFreeSpaceFinder
 
         for ($y = 0; $y <= $maxY; $y++) {
             for ($x = 0; $x <= $maxX; $x++) {
-                if (!$this->canPlace($item, $container, $placements, $x, $y)) {
+                if (!$this->canPlace($item, $container, $placements, $x, $y, $rotated)) {
                     continue;
                 }
 
@@ -40,10 +44,10 @@ class GridFreeSpaceFinder
         return null;
     }
 
-    private function canPlace(array $item, array $container, array $placements, int $x, int $y): bool
+    private function canPlace(array $item, array $container, array $placements, int $x, int $y, bool $rotated = false): bool
     {
         try {
-            $this->validator->validateNewPlacement($item, $container, $placements, $x, $y);
+            $this->validator->validateNewPlacement($item, $container, $placements, $x, $y, $rotated);
 
             return true;
         } catch (InventoryException) {

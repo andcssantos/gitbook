@@ -15,6 +15,19 @@ Completed inventory foundation:
 - TASK-009 implemented: physical container auto-link for container items, grant/starter integration, tests, report.
 - TASK-010 implemented: inventory summary/container/item query API, linked metadata in snapshot, rotated on move route, tests, report.
 - TASK-011 implemented: occupancy badges, physical bag navigation, durability bar, summary header, report.
+- TASK-014 implemented: `equipment_scope` on property definitions, `agility`/`energy` stats, `upgrade_level` max 25.
+- TASK-015 implemented: Bless jewel service (+1 upgrade, scoped base stat buffs, success rate decay).
+- TASK-016 implemented: Soul jewel service (affix upgrade or rare new affix roll).
+- TASK-017 implemented: drag jewel onto equipment, gold/purple preview, preview API + confirm modal + enhance API.
+- TASK-018 implemented: gem socketing MVP — drag `gem_*` onto equipment with empty sockets, preview/apply API, bonus applied to item.
+
+Jewel enhancement UX:
+- Drag `jewel_blessing_minor` onto equipment: gold preview, confirm with success %, consumes jewel on apply.
+- Drag `jewel_soul_minor` onto equipment with affixes: purple preview, confirm, affix upgrade on success.
+- Server is authoritative for compatibility; frontend only hints bless/soul/socket states.
+- Bless/Soul result modals after apply (success and failure).
+- Confirmation modal only when bless/soul chance < 50%.
+- Gem socket preview: cyan highlight; confirm shows effect before apply.
 
 Inventory UX fixes after TASK-007:
 - GridStack `float: true` keeps items at the exact cell where dropped (SCUM-style free placement); `float: false` was compacting widgets upward.
@@ -33,10 +46,13 @@ Inventory UX fixes after TASK-007:
 Important migrations to run on existing DB:
 - `2026_07_09_000005_fix_main_inventory_container_acceptance.php`
 - `2026_07_09_000006_create_item_action_tables.php`
+- `2026_07_09_000014_add_enhancement_property_scopes.php`
 
 Frontend shortcuts in `public/views/app/dashboard/inventory/assets/script/main.js`:
 - Ctrl+Click / Cmd+Click: split half quantity.
 - Drag over compatible stack: merge.
+- Drag jewel over equipment: bless/soul enhancement preview and confirm.
+- Drag gem over equipment with empty sockets: socket preview and confirm.
 - Right-click: item context menu (DISCARD, INSPECT, OPEN from server).
 - Hold click + R: rotate while dragging (SCUM-style toggle for non-square items).
 - Cross-container drop requires pointer inside target grid; dropping on backpack item in parent grid is blocked with guidance.
@@ -48,16 +64,23 @@ API highlights:
 - `GET /api/inventory/items/{itemPublicId}`
 - `GET /api/items/{itemPublicId}/actions`
 - `POST /api/items/{itemPublicId}/actions/{actionCode}` with optional `{ "confirm": true }`
+- `POST /api/inventory/enhance/preview` — preview bless/soul jewel on equipment
+- `POST /api/inventory/enhance` — apply jewel with `{ confirm: true }` and placement versions
+- `POST /api/inventory/socket/preview` — preview gem socket on equipment
+- `POST /api/inventory/socket` — apply gem socket with `{ confirm: true }`
 - `POST /api/dev/inventory/grant-item` (dev/local only)
 
 Validation:
-- composer test: OK, 104 tests, 387 assertions
+- composer test: OK (includes `JewelEnhancementTest`, 7 tests)
 - composer analyse: OK
 
 Next inventory candidates:
+- Unsocket / replace gem flow.
 - Backpack equip/unequip flow.
 - Partial inventory refresh in frontend.
 - Icons/search/filter polish.
 - Ghost placement preview overlay (SCUM-style cell highlight).
 
 Do not start crafting, marketplace, expeditions, or game loops until inventory backend + core frontend affordances are complete.
+
+**Roadmap de evolução:** ver [docs/evolucao-itens-inventario.md](docs/evolucao-itens-inventario.md) — Fase 1 (stats) concluída; próxima Fase 2 (UI core).

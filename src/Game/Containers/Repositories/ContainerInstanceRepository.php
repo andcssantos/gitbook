@@ -71,6 +71,20 @@ class ContainerInstanceRepository
         return is_array($row) ? $row : null;
     }
 
+    public function findById(int $id, bool $lock = false): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT ci.*, cd.code AS definition_code, cd.container_type, cd.allow_container_items
+            FROM container_instances ci
+            INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id
+            WHERE ci.id = :id
+            LIMIT 1' . $this->lockClause($lock));
+        $stmt->execute(['id' => $id]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
     public function listActiveForPlayer(int $playerId, bool $lock = false): array
     {
         $stmt = $this->pdo()->prepare('SELECT

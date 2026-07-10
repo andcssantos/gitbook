@@ -1,4 +1,5 @@
 import { ApiError, apiFetch } from '/assets/framework/api.js';
+import { openModal, installModalStyles } from '/assets/framework/modal.js';
 import { installToastStyles, toast } from '/assets/framework/toast.js';
 
 const app = document.querySelector('[data-inventory-app]');
@@ -8,8 +9,238 @@ const dockRoot = document.querySelector('[data-inventory-dock]');
 const statusNode = document.querySelector('[data-inventory-status]');
 const summaryNode = document.querySelector('[data-inventory-summary]');
 const refreshButton = document.querySelector('[data-inventory-refresh]');
+const compareDockRoot = document.querySelector('[data-inventory-compare]');
 
 installToastStyles();
+installModalStyles();
+installInventoryModalStyles();
+
+function installInventoryModalStyles() {
+    if (document.getElementById('inventory-modal-styles')) return;
+
+    const style = document.createElement('style');
+    style.id = 'inventory-modal-styles';
+    style.textContent = `
+.inventory-modal { display: grid; gap: 14px; }
+.inventory-modal h3 { margin: 0; font-size: 1.15rem; }
+.inventory-modal-body { display: grid; gap: 8px; color: #334155; line-height: 1.45; }
+.inventory-modal-body p { margin: 0; }
+.inventory-modal-body ul { margin: 0; padding-left: 18px; }
+.inventory-modal-action {
+    justify-self: start;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.inventory-modal--success h3 { color: #166534; }
+.inventory-modal--success .inventory-modal-action { background: #22c55e; color: #052e16; }
+.inventory-modal--warning h3 { color: #b45309; }
+.inventory-modal--warning .inventory-modal-action { background: #f59e0b; color: #451a03; }
+.inventory-modal--danger h3 { color: #fecaca; }
+.inventory-modal--danger .inventory-modal-confirm { background: #ef4444; color: #fff7ed; }
+.inventory-modal--info h3 { color: #93c5fd; }
+.inventory-modal--info .inventory-modal-action { background: #3b82f6; color: #eff6ff; }
+.inventory-modal--confirm .inventory-modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+.inventory-modal-cancel,
+.inventory-modal-confirm {
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.inventory-modal-cancel {
+    background: rgba(148, 163, 184, .16);
+    color: #e2e8f0;
+}
+.inventory-modal-confirm {
+    background: #f59e0b;
+    color: #451a03;
+}
+.inventory-modal--confirm h3 { color: #f8fafc; }
+.inventory-modal--confirm .inventory-modal-body { color: #cbd5e1; }
+.gb-modal { background: #0f172a; color: #f8fafc; border: 1px solid rgba(148, 163, 184, .28); box-shadow: 0 24px 80px rgba(0,0,0,.55); }
+.gb-modal-overlay { background: rgba(2, 6, 23, .72); }
+`;
+    document.head.appendChild(style);
+}
+
+function showInventoryModal({ title, tone = 'info', bodyHtml, primaryLabel = 'Entendi' }) {
+    const content = document.createElement('div');
+    content.className = `inventory-modal inventory-modal--${tone}`;
+    content.innerHTML = `
+        <h3>${escapeHtml(title)}</h3>
+        <div class="inventory-modal-body">${bodyHtml}</div>
+        <button type="button" class="inventory-modal-action">${escapeHtml(primaryLabel)}</button>
+    `;
+
+    const { close, element } = openModal(content, { closeOnBackdrop: true });
+    element.querySelector('.inventory-modal-action')?.addEventListener('click', close);
+
+    return close;
+}
+
+function confirmInventoryAction({
+    title,
+    bodyHtml,
+    confirmLabel = 'Confirmar',
+    cancelLabel = 'Cancelar',
+    tone = 'warning',
+}) {
+    return new Promise((resolve) => {
+        const content = document.createElement('div');
+        content.className = `inventory-modal inventory-modal--confirm inventory-modal--${tone}`;
+        content.innerHTML = `
+            <h3>${escapeHtml(title)}</h3>
+            <div class="inventory-modal-body">${bodyHtml}</div>
+            <div class="inventory-modal-actions">
+                <button type="button" class="inventory-modal-cancel">${escapeHtml(cancelLabel)}</button>
+                <button type="button" class="inventory-modal-confirm">${escapeHtml(confirmLabel)}</button>
+            </div>
+        `;
+
+        const { close, element } = openModal(content, { closeOnBackdrop: false });
+        const finish = (value) => {
+            close();
+            resolve(value);
+        };
+
+        element.querySelector('.inventory-modal-cancel')?.addEventListener('click', () => finish(false));
+        element.querySelector('.inventory-modal-confirm')?.addEventListener('click', () => finish(true));
+    });
+}
+
+function showEnhanceResultModal(jewelType, targetItem, data) {
+    const targetName = escapeHtml(itemLabel(targetItem));
+
+    if (data.success) {
+        if (jewelType === 'bless') {
+            const level = Number(data.to_level ?? 0);
+            const props = Array.isArray(data.changed_properties) ? data.changed_properties : [];
+            const propLines = props.length
+                ? `<ul>${props.map((entry) => `<li><strong>${escapeHtml(entry.code)}</strong>: ${entry.from} → ${entry.to}</li>`).join('')}</ul>`
+                : '<p>Sem alteracoes adicionais de atributos base.</p>';
+
+            showInventoryModal({
+                title: 'Bencao bem-sucedida!',
+                tone: 'success',
+                bodyHtml: `
+                    <p><strong>${targetName}</strong> foi melhorado para <strong>+${level}</strong>.</p>
+                    ${propLines}
+                `,
+            });
+            return;
+        }
+
+        if (jewelType === 'chaos') {
+            const fromBucket = escapeHtml(String(data.from_quality_bucket || 'common'));
+            const toBucket = escapeHtml(String(data.to_quality_bucket || 'common'));
+            const createdAffixes = Array.isArray(data.created_affixes) ? data.created_affixes : [];
+            const scaledStats = Array.isArray(data.scaled_base_stats) ? data.scaled_base_stats : [];
+            const scaledLines = scaledStats.length
+                ? `<ul>${scaledStats.map((entry) => `<li><strong>${escapeHtml(entry.name || entry.code)}</strong>: ${entry.from} → ${entry.to}</li>`).join('')}</ul>`
+                : '';
+            const affixLines = createdAffixes.length
+                ? `<ul>${createdAffixes.map((entry) => `<li><strong>${escapeHtml(entry.name || entry.code)}</strong> (+${escapeHtml(String(entry.value))})</li>`).join('')}</ul>`
+                : '<p>Nenhum novo atributo foi revelado.</p>';
+
+            showInventoryModal({
+                title: 'Caos transformador!',
+                tone: 'success',
+                bodyHtml: `
+                    <p><strong>${targetName}</strong> foi transformado de <strong>${fromBucket}</strong> para <strong>${toBucket}</strong>.</p>
+                    ${scaledLines ? `<p>Atributos base fortalecidos:</p>${scaledLines}` : ''}
+                    ${affixLines}
+                `,
+            });
+            return;
+        }
+
+        if (jewelType === 'reroll') {
+            const removed = data.removed_affix || {};
+            const created = data.created_affix || {};
+            showInventoryModal({
+                title: 'Affix rerrolado!',
+                tone: 'success',
+                bodyHtml: `
+                    <p><strong>${targetName}</strong> teve um atributo substituido.</p>
+                    <p>Removido: <strong>${escapeHtml(removed.name || removed.code || '-')}</strong></p>
+                    <p>Novo: <strong>${escapeHtml(created.name || created.code || '-')}</strong> (+${escapeHtml(String(created.value ?? '?'))})</p>
+                `,
+            });
+            return;
+        }
+
+        const affixes = Array.isArray(data.changed_affixes) ? data.changed_affixes : [];
+        const created = data.created_affix;
+        const detail = created
+            ? `<p>Novo atributo: <strong>${escapeHtml(created.code)}</strong> (+${escapeHtml(String(created.value))}).</p>`
+            : affixes.length
+                ? `<ul>${affixes.map((entry) => `<li><strong>${escapeHtml(entry.code)}</strong>: ${entry.from} → ${entry.to}</li>`).join('')}</ul>`
+                : '<p>Um atributo do item foi fortalecido.</p>';
+
+        showInventoryModal({
+            title: 'Alma fortalecida!',
+            tone: 'success',
+            bodyHtml: `
+                <p><strong>${targetName}</strong> recebeu um novo poder.</p>
+                ${detail}
+            `,
+        });
+        return;
+    }
+
+    if (jewelType === 'chaos') {
+        const failTitle = 'Caos instavel';
+        showInventoryModal({
+            title: failTitle,
+            tone: 'warning',
+            bodyHtml: `
+                <p>O caos nao transformou <strong>${targetName}</strong>.</p>
+                <p>A joia foi consumida, mas o item permaneceu intacto.</p>
+            `,
+        });
+        return;
+    }
+
+    const failTitle = jewelType === 'bless'
+        ? 'Bencao falhou'
+        : jewelType === 'reroll'
+            ? 'Rerrolagem falhou'
+            : 'Alma falhou';
+    showInventoryModal({
+        title: failTitle,
+        tone: 'warning',
+        bodyHtml: `
+            <p>A melhoria em <strong>${targetName}</strong> nao teve sucesso.</p>
+            <p>A joia foi consumida, mas o item permaneceu intacto.</p>
+        `,
+    });
+}
+
+function showSocketResultModal(targetItem, data) {
+    const targetName = escapeHtml(itemLabel(targetItem));
+    const effect = data.applied_effect || {};
+    const propertyName = escapeHtml(effect.property_name || effect.property || 'Atributo');
+    const value = escapeHtml(String(effect.value ?? '?'));
+    const socketIndex = Number(data.socket_index ?? 0) + 1;
+
+    showInventoryModal({
+        title: 'Gema encaixada!',
+        tone: 'success',
+        bodyHtml: `
+            <p><strong>${targetName}</strong> recebeu a gema no engaste ${socketIndex}.</p>
+            <p><strong>${propertyName}</strong>: +${value}</p>
+        `,
+    });
+}
 
 let grids = new Map();
 let itemIndex = new Map();
@@ -22,10 +253,51 @@ let actionInFlight = false;
 let contextMenuState = null;
 let openContainerPublicIds = new Set(JSON.parse(localStorage.getItem('evolvaxe.inventory.openContainers') || '[]'));
 let marketDeliveryOpen = localStorage.getItem('evolvaxe.inventory.marketDeliveryOpen') === '1';
+let expeditionCarryOpen = localStorage.getItem('evolvaxe.inventory.expeditionCarryOpen') !== '0';
 let characterPanelOpen = localStorage.getItem('evolvaxe.inventory.characterPanelOpen') !== '0';
+let equippedBackpackPublicId = null;
+let playerPower = null;
+let currentEquipment = [];
+let currentEquipmentLinks = [];
+let currentSetBonuses = [];
+let comparePanelState = null;
+let splitViewState = JSON.parse(localStorage.getItem('evolvaxe.inventory.splitView') || 'null');
+let inventorySummaryByPublicId = new Map();
 
 const CELL_SIZE = 44;
 const INVENTORY_DRAG_ENGINE = 'v2';
+const BLESS_JEWEL_CODES = ['jewel_blessing_minor'];
+const SOUL_JEWEL_CODES = ['jewel_soul_minor'];
+const CHAOS_JEWEL_CODES = ['jewel_chaos_minor'];
+const REROLL_JEWEL_CODES = ['jewel_reroll_minor'];
+const ITEM_TYPE_META = {
+    weapon: { label: 'Arma', icon: '⚔', tone: 'offense' },
+    armor: { label: 'Armadura', icon: '🛡', tone: 'defense' },
+    tool: { label: 'Ferramenta', icon: '🔧', tone: 'utility' },
+    material: { label: 'Material', icon: '🪨', tone: 'material' },
+    consumable: { label: 'Consumivel', icon: '🧪', tone: 'consumable' },
+    currency: { label: 'Moeda', icon: '🪙', tone: 'currency' },
+};
+const EQUIPMENT_SLOT_ICON_FILES = {
+    weapon: 'main_weapon.png',
+    offhand: 'offhand.png',
+    weapon_offhand: 'offhand.png',
+    shield: 'offhand.png',
+    quiver: 'offhand.png',
+    helmet: 'healme.png',
+    chest: 'bagpack.png',
+    pants: 'pants.png',
+    boots: 'boots.png',
+    gloves: 'gloves.png',
+    ring: 'ring_1.png',
+    ring_2: 'ring_2.png',
+    amulet: 'pendante.png',
+    earring: 'neacles.png',
+    belt: 'neacles.png',
+    wings: 'wings.png',
+    pet: 'pet.png',
+    backpack: 'bagpack.png',
+};
 
 if (window.GridStack) {
     window.GridStack.renderCB = (element, widget) => {
@@ -48,12 +320,13 @@ function itemLabel(item) {
 
 function rarityKey(item) {
     const bucket = String(item.quality_bucket || 'common').trim().toLowerCase();
-    if (['normal', 'basic'].includes(bucket)) return 'common';
-    if (['magic', 'uncommon'].includes(bucket)) return 'magic';
-    if (['rare'].includes(bucket)) return 'rare';
-    if (['epic', 'heroic'].includes(bucket)) return 'epic';
-    if (['legendary', 'mythic'].includes(bucket)) return 'legendary';
-    if (['unique', 'relic'].includes(bucket)) return 'unique';
+    if (['normal', 'basic', 'white'].includes(bucket)) return 'common';
+    if (['uncommon', 'green'].includes(bucket)) return 'uncommon';
+    if (['magic', 'blue'].includes(bucket)) return 'magic';
+    if (['rare', 'yellow'].includes(bucket)) return 'rare';
+    if (['legendary', 'gold', 'mythic', 'orange'].includes(bucket)) return 'legendary';
+    if (['epic', 'heroic', 'purple'].includes(bucket)) return 'epic';
+    if (['divine', 'unique', 'relic', 'pink', 'rosy'].includes(bucket)) return 'divine';
 
     return /^[a-z0-9_-]+$/i.test(bucket) ? bucket : 'common';
 }
@@ -61,11 +334,12 @@ function rarityKey(item) {
 function rarityLabel(item) {
     const labels = {
         common: 'Comum',
+        uncommon: 'Incomum',
         magic: 'Magico',
         rare: 'Raro',
-        epic: 'Epico',
         legendary: 'Lendario',
-        unique: 'Unico',
+        epic: 'Epico',
+        divine: 'Divino',
     };
 
     return labels[rarityKey(item)] || String(item.quality_bucket || 'Comum');
@@ -81,42 +355,582 @@ function formatItemPropertyValue(property) {
     return `${formatted}${property.unit ? property.unit : ''}`;
 }
 
-function itemTooltip(item) {
-    const quantity = Number(item.quantity || 1);
-    const tags = [
-        escapeHtml(rarityLabel(item)),
-        item.definition?.stackable ? 'Empilhavel' : 'Instanciado',
-        item.definition?.is_container ? 'Container' : null,
-    ].filter(Boolean);
+function isSocketedGemProperty(property) {
+    const source = String(property?.source || '');
+    return source === 'gem' || source.startsWith('socketed_gem_');
+}
 
-    const affixes = Array.isArray(item.affixes) ? item.affixes : [];
-    const properties = Array.isArray(item.properties) ? item.properties : [];
-    const sockets = Array.isArray(item.sockets) ? item.sockets : [];
-    const affixList = affixes.length
-        ? `<ul class="inventory-tooltip-affixes">${affixes.map((affix) => `<li><span>${escapeHtml(affix.name)}</span><strong>+${escapeHtml(formatItemPropertyValue(affix))} ${escapeHtml(affix.property_name || '')}</strong></li>`).join('')}</ul>`
-        : '';
-    const propertyList = properties.length
-        ? `<ul class="inventory-tooltip-properties">${properties.map((property) => `<li><span>${escapeHtml(property.name)}</span><strong>${escapeHtml(formatItemPropertyValue(property))}</strong></li>`).join('')}</ul>`
-        : '';
-    const socketList = sockets.length
-        ? `<div class="inventory-tooltip-sockets">${sockets.map((socket) => `<span class="${socket.gem ? 'is-filled' : 'is-empty'}">${socket.gem ? escapeHtml(socket.gem.name) : 'Engaste vazio'}</span>`).join('')}</div>`
-        : '';
-    const details = [
-        item.definition?.description ? `<p>${escapeHtml(item.definition.description)}</p>` : '',
-        affixList,
-        propertyList,
-        socketList,
-        `<dl>
-            <div><dt>Codigo</dt><dd>${escapeHtml(item.definition?.code || '-')}</dd></div>
-            <div><dt>Quantidade</dt><dd>${quantity}</dd></div>
-            ${item.quality_value !== null && item.quality_value !== undefined ? `<div><dt>Qualidade</dt><dd>${Number(item.quality_value).toFixed(1)}</dd></div>` : ''}
-        </dl>`,
-        '<small>Arraste para mover. Pressione R ou Q durante o arraste para rotacionar.</small>',
-    ].filter(Boolean).join('');
+function socketGemEffect(item, socket) {
+    const source = `socketed_gem_${socket.index}`;
+    const property = (Array.isArray(item.properties) ? item.properties : [])
+        .find((entry) => String(entry.source || '') === source);
+
+    if (!property) {
+        return null;
+    }
+
+    return {
+        name: property.name,
+        value: formatItemPropertyValue(property),
+    };
+}
+
+function socketGemAssetUrl(gem) {
+    const code = String(gem?.definition_code || '').trim();
+    if (!/^[a-z0-9_-]+$/i.test(code)) return null;
+
+    return `/assets/game/items/${code}.png`;
+}
+
+function renderSocketCell(item, socket) {
+    if (!socket.gem) {
+        return '<span class="inventory-tooltip-socket is-empty" title="Engaste vazio">+</span>';
+    }
+
+    const effect = socketGemEffect(item, socket);
+    const assetUrl = socketGemAssetUrl(socket.gem);
+    const effectLabel = effect
+        ? `+${escapeHtml(effect.value)} ${escapeHtml(effect.name)}`
+        : escapeHtml(socket.gem.name);
 
     return `
-        <div class="inventory-tooltip rarity-${rarityKey(item)}">
+        <span class="inventory-tooltip-socket is-filled" title="${effectLabel}">
+            ${assetUrl
+                ? `<img class="inventory-tooltip-socket-art" src="${escapeHtml(assetUrl)}" alt="${escapeHtml(socket.gem.name)}" loading="lazy" onerror="this.remove();">`
+                : `<span class="inventory-tooltip-socket-fallback">${escapeHtml(socket.gem.name.charAt(0))}</span>`}
+            <span class="inventory-tooltip-socket-effect">${effectLabel}</span>
+        </span>
+    `;
+}
+
+function containerStorageSummary(item) {
+    const linked = item?.linked_container;
+    if (!linked?.grid) return null;
+
+    const columns = Number(linked.grid.columns || 0);
+    const rows = Number(linked.grid.rows || 0);
+    const capacity = Number(linked.capacity_cells || (columns * rows));
+    const itemCount = Number(linked.item_count || 0);
+    const percent = capacity > 0 ? Math.round((itemCount / capacity) * 100) : 0;
+
+    return {
+        label: `${columns}x${rows}`,
+        detail: `${itemCount} item(ns) · ${percent}%`,
+        itemCount,
+        capacity,
+    };
+}
+
+function containerItemBadge(item) {
+    if (!item?.definition?.is_container) return '';
+    if (item.definition?.equip_slot_code === 'backpack' && item.public_id === equippedBackpackPublicId) {
+        return '';
+    }
+
+    const storage = containerStorageSummary(item);
+    if (!storage) return '<span class="inventory-item-badge">Armazenamento</span>';
+
+    return `<span class="inventory-item-badge">${escapeHtml(storage.label)}</span>`;
+}
+
+function containerItemTooltipTag(item) {
+    if (!item?.definition?.is_container) return null;
+    if (item.definition?.equip_slot_code === 'backpack' && item.public_id === equippedBackpackPublicId) {
+        return 'Expedicao ativa';
+    }
+
+    const storage = containerStorageSummary(item);
+    return storage ? `Armazenamento ${storage.label}` : 'Armazenamento';
+}
+
+function isEquippableItem(item) {
+    return Boolean(item?.definition?.equip_slot_code);
+}
+
+function isMergeableItem(item) {
+    return Boolean(item?.definition?.stackable) && !isEquippableItem(item);
+}
+
+const BASE_STAT_CODES = ['strength', 'attack_power', 'defense', 'armor', 'agility', 'vitality', 'max_health', 'energy'];
+const BASE_STAT_LABELS = {
+    strength: 'Forca',
+    attack_power: 'Forca',
+    defense: 'Defesa',
+    armor: 'Defesa',
+    agility: 'Agilidade',
+    vitality: 'Vitalidade',
+    max_health: 'Vitalidade',
+    energy: 'Energia',
+};
+const BASE_STAT_ORDER = ['strength', 'attack_power', 'defense', 'armor', 'agility', 'vitality', 'max_health', 'energy'];
+const RARITY_RANGE_MULTIPLIER = {
+    common: 1,
+    uncommon: 1.06,
+    magic: 1.12,
+    rare: 1.2,
+    legendary: 1.32,
+    epic: 1.46,
+    divine: 1.62,
+};
+
+function upgradeLevelFromItem(item) {
+    const properties = Array.isArray(item?.properties) ? item.properties : [];
+    const entry = properties.find((property) => String(property.code || '') === 'upgrade_level');
+    if (!entry) return 0;
+    return Number(entry.value ?? entry.integer_value ?? entry.numeric_value ?? 0) || 0;
+}
+
+function baseStatRangeLabel(item, propertyCode) {
+    const quality = Number(item?.quality_value || 40);
+    const mult = RARITY_RANGE_MULTIPLIER[rarityKey(item)] || 1;
+    const levelBonus = 1 + (upgradeLevelFromItem(item) * 0.04);
+    const ranges = {
+        attack_power: [quality / 6, quality / 3],
+        strength: [quality / 6, quality / 3],
+        armor: [quality / 5, quality / 2.5],
+        defense: [quality / 5, quality / 2.5],
+        agility: [quality / 8, quality / 4],
+        energy: [quality / 7, quality / 3.5],
+        vitality: [quality / 4, quality / 2],
+        max_health: [quality / 2, quality],
+    };
+    const [minFormula, maxFormula] = ranges[propertyCode] || [quality / 8, quality / 4];
+    const min = Math.max(1, Math.round(minFormula * mult * levelBonus));
+    const max = Math.max(min + 1, Math.round(maxFormula * mult * levelBonus));
+    return `${min}~${max}`;
+}
+
+function itemPowerValue(item) {
+    const power = Number(item?.power ?? 0);
+    return Number.isFinite(power) && power > 0 ? Math.round(power) : 0;
+}
+
+function propertyNumericValue(property) {
+    const value = property?.value ?? property?.rolled_value ?? 0;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function compatibleComparisonSlots(slotCode) {
+    if (slotCode === 'ring') return ['ring', 'ring_2'];
+    if (slotCode === 'potion') return ['potion_1', 'potion_2', 'potion_3', 'potion_4'];
+    if (slotCode === 'weapon') return ['weapon', 'weapon_offhand'];
+    return [slotCode];
+}
+
+function comparisonEquippedItem(item) {
+    const slotCode = item?.definition?.equip_slot_code;
+    if (!slotCode || item?.equipped) return null;
+
+    for (const code of compatibleComparisonSlots(slotCode)) {
+        const slot = currentEquipment.find((entry) => entry.code === code);
+        if (slot?.item && slot.item.public_id !== item.public_id) {
+            return slot.item;
+        }
+    }
+
+    return null;
+}
+
+function formatStatDelta(delta, unit = '') {
+    const numeric = Number(delta);
+    if (!Number.isFinite(numeric) || Math.abs(numeric) < 0.05) return '';
+    const rounded = Number.isInteger(numeric) ? String(Math.round(numeric)) : numeric.toFixed(1);
+    const sign = numeric > 0 ? '+' : '';
+    const cls = numeric > 0 ? 'is-better' : 'is-worse';
+    return `<span class="inventory-tooltip-delta ${cls}">${sign}${escapeHtml(rounded)}${escapeHtml(unit)}</span>`;
+}
+
+function renderTooltipStatLine(label, valueHtml, options = {}) {
+    return `
+        <li class="inventory-tooltip-stat-line">
+            <span class="inventory-tooltip-stat-name">${escapeHtml(label)}</span>
+            <span class="inventory-tooltip-stat-dots" aria-hidden="true"></span>
+            <span class="inventory-tooltip-stat-value">${valueHtml}${options.delta || ''}</span>
+        </li>
+    `;
+}
+
+function renderUpgradeStars(item) {
+    const level = upgradeLevelFromItem(item);
+    if (level <= 0) return '';
+
+    const maxStars = 5;
+    const stars = Array.from({ length: maxStars }, (_, index) => {
+        const filled = index < level ? ' is-filled' : '';
+        return `<span class="inventory-equipment-star${filled}" aria-hidden="true">★</span>`;
+    }).join('');
+
+    return `<div class="inventory-equipment-stars" aria-label="Nivel de melhoria ${level}">${stars}</div>`;
+}
+
+function baseStatRangeLabelBracketed(item, propertyCode) {
+    return `[${baseStatRangeLabel(item, propertyCode).replace('~', ' - ')}]`;
+}
+
+function tooltipPropertyValue(item, property, options = {}) {
+    const code = String(property.code || '');
+    const value = formatItemPropertyValue(property);
+    const compareItem = options.compareWith || null;
+    let delta = '';
+
+    if (compareItem) {
+        const compareProperty = (compareItem.properties || []).find((entry) => String(entry.code || '') === code);
+        if (compareProperty) {
+            delta = formatStatDelta(
+                propertyNumericValue(property) - propertyNumericValue(compareProperty),
+                property.unit || ''
+            );
+        }
+    }
+
+    if (options.showRange && BASE_STAT_CODES.includes(code)) {
+        return `<strong>${escapeHtml(value)}</strong><small class="inventory-tooltip-range">${escapeHtml(baseStatRangeLabelBracketed(item, code))}</small>${delta}`;
+    }
+
+    return `<strong>${escapeHtml(value)}</strong>${delta}`;
+}
+
+function jewelTooltipProperties(item) {
+    const properties = (Array.isArray(item.properties) ? item.properties : [])
+        .filter((property) => {
+            const code = String(property.code || '');
+            return ['upgrade_success_rate'].includes(code) || String(property.source || '') === 'upgrade_jewel';
+        });
+
+    if (!properties.length) return '';
+
+    return `<ul class="inventory-tooltip-properties">${properties.map((property) => `<li><span>${escapeHtml(property.name)}</span>${tooltipPropertyValue(item, property)}</li>`).join('')}</ul>`;
+}
+
+function tooltipSaleBlock() {
+    return `
+        <div class="inventory-tooltip-prices">
+            <div><span>Venda NPC</span><strong>—</strong></div>
+            <div><span>Venda jogador</span><strong>—</strong></div>
+        </div>
+    `;
+}
+
+function itemCategoryCode(item) {
+    const code = String(item?.category_code || item?.definition?.category_code || '').trim().toLowerCase();
+    if (code) return code;
+    if (isJewelItem(item)) return 'material';
+    if (isEquippableItem(item)) {
+        const slot = String(item?.definition?.equip_slot_code || '');
+        if (['weapon', 'weapon_offhand'].includes(slot)) return 'weapon';
+        return 'armor';
+    }
+    if (item?.definition?.is_container) return 'tool';
+    if (isMergeableItem(item)) return 'consumable';
+    return 'material';
+}
+
+function resolveItemTypeMeta(item) {
+    const code = itemCategoryCode(item);
+    return ITEM_TYPE_META[code] || { label: 'Item', icon: '◆', tone: 'utility' };
+}
+
+function findSetContextForItem(item) {
+    const definitionCode = String(item?.definition?.code || '');
+    const publicId = String(item?.public_id || '');
+
+    for (const link of currentEquipmentLinks) {
+        const slots = Array.isArray(link.slots) ? link.slots : [];
+        const matched = slots.some((slot) => (
+            String(slot.definition_code || '') === definitionCode
+            || String(slot.item_public_id || '') === publicId
+        ));
+        if (!matched) continue;
+
+        const bonus = currentSetBonuses.find((entry) => entry.set_code === link.set_code);
+        return {
+            set_code: link.set_code,
+            set_name: link.set_name,
+            aura_color: link.aura_color,
+            equipped_pieces: Number(bonus?.equipped_pieces || slots.length),
+            bonuses: bonus?.bonuses || [],
+        };
+    }
+
+    return null;
+}
+
+function renderTooltipHero(item) {
+    const assetUrl = itemAssetUrl(item);
+    const typeMeta = resolveItemTypeMeta(item);
+    const upgradeLevel = upgradeLevelFromItem(item);
+
+    return `
+        <div class="inventory-tooltip-hero">
+            <div class="inventory-tooltip-hero-art${assetUrl ? '' : ' is-placeholder'}">
+                ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="" loading="lazy">` : `<span>${escapeHtml(typeMeta.icon)}</span>`}
+            </div>
+            <div class="inventory-tooltip-hero-copy">
+                <div class="inventory-tooltip-hero-title">${escapeHtml(itemLabel(item))}</div>
+                <div class="inventory-tooltip-hero-meta">
+                    <span class="inventory-tooltip-type-badge is-${escapeHtml(typeMeta.tone)}">${escapeHtml(typeMeta.icon)} ${escapeHtml(typeMeta.label)}</span>
+                    ${upgradeLevel > 0 ? `<span class="inventory-tooltip-upgrade">+${upgradeLevel}</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderTooltipSetBlock(item) {
+    const setContext = findSetContextForItem(item);
+    if (!setContext) return '';
+
+    const color = /^#[0-9a-f]{6}$/i.test(String(setContext.aura_color || ''))
+        ? setContext.aura_color
+        : '#55c58a';
+    const bonusLines = (setContext.bonuses || [])
+        .map((bonus) => `<small>${escapeHtml(bonus.description || `${bonus.name} +${bonus.value}${bonus.unit || ''}`)}</small>`)
+        .join('');
+
+    return `
+        <div class="inventory-tooltip-set" style="--set-aura-color: ${escapeHtml(color)}">
+            <strong>${escapeHtml(setContext.set_name)}</strong>
+            <span>${Number(setContext.equipped_pieces || 0)} peca(s) equipada(s)</span>
+            ${bonusLines}
+        </div>
+    `;
+}
+
+function renderItemTypeBadge(item) {
+    if (item?.definition?.is_container) return '';
+    const typeMeta = resolveItemTypeMeta(item);
+    return `<span class="inventory-item-type-badge is-${escapeHtml(typeMeta.tone)}" title="${escapeHtml(typeMeta.label)}">${escapeHtml(typeMeta.icon)}</span>`;
+}
+
+function setGlowLevel(setCode, setBonuses = []) {
+    const bonus = (setBonuses || []).find((entry) => entry.set_code === setCode);
+    const pieces = Number(bonus?.equipped_pieces || 0);
+    if (pieces >= 5) return 3;
+    if (pieces >= 3) return 2;
+    if (pieces >= 2) return 1;
+    return 0;
+}
+
+function closeComparePanel() {
+    comparePanelState = null;
+    if (!compareDockRoot) return;
+    compareDockRoot.hidden = true;
+    compareDockRoot.classList.remove('is-open');
+    compareDockRoot.replaceChildren();
+}
+
+function openComparePanel(item) {
+    if (!compareDockRoot || !isEquippableItem(item)) return;
+
+    const equipped = comparisonEquippedItem(item);
+    if (!equipped) {
+        toast('Nenhum item equipado no slot correspondente para comparar.', 'info', 2800);
+        return;
+    }
+
+    if (comparePanelState?.item?.public_id === item.public_id) {
+        closeComparePanel();
+        return;
+    }
+
+    comparePanelState = { item, equipped };
+    renderComparePanel();
+}
+
+function renderComparePanel() {
+    if (!compareDockRoot || !comparePanelState) {
+        closeComparePanel();
+        return;
+    }
+
+    const { item, equipped } = comparePanelState;
+    const itemPower = itemPowerValue(item);
+    const equippedPower = itemPowerValue(equipped);
+    const powerDelta = itemPower - equippedPower;
+
+    compareDockRoot.hidden = false;
+    compareDockRoot.classList.add('is-open');
+    compareDockRoot.innerHTML = `
+        <header class="inventory-compare-header">
+            <div>
+                <p class="inventory-kicker">Comparacao</p>
+                <h3>${escapeHtml(itemLabel(item))}</h3>
+            </div>
+            <button type="button" class="inventory-compare-close" aria-label="Fechar comparacao">×</button>
+        </header>
+        <div class="inventory-compare-grid">
+            <section class="inventory-compare-card rarity-${rarityKey(item)}">
+                <span class="inventory-compare-label">Candidato</span>
+                ${itemTooltip(item, { compareWith: equipped, inline: true })}
+            </section>
+            <section class="inventory-compare-card rarity-${rarityKey(equipped)}">
+                <span class="inventory-compare-label">Equipado</span>
+                ${itemTooltip(equipped, { compareWith: item, inline: true })}
+            </section>
+        </div>
+        <footer class="inventory-compare-footer">
+            <div>
+                <span>Poder</span>
+                <strong>${itemPower}</strong>
+                ${formatStatDelta(powerDelta)}
+            </div>
+            <small>Ctrl+clique no item para abrir ou fechar.</small>
+        </footer>
+    `;
+
+    compareDockRoot.querySelector('.inventory-compare-close')?.addEventListener('click', closeComparePanel);
+}
+
+function itemTooltip(item, options = {}) {
+    const inline = Boolean(options.inline);
+    const compareWith = options.compareWith || (inline ? null : comparisonEquippedItem(item));
+    const quantity = Number(item.quantity || 1);
+    const equippable = isEquippableItem(item);
+    const jewel = isJewelItem(item);
+    const mergeable = isMergeableItem(item);
+    const categoryCode = itemCategoryCode(item);
+    const typeMeta = resolveItemTypeMeta(item);
+    const upgradeLevel = upgradeLevelFromItem(item);
+    const power = itemPowerValue(item);
+    const comparePower = compareWith ? itemPowerValue(compareWith) : 0;
+    const powerDelta = compareWith ? formatStatDelta(power - comparePower) : '';
+    const tags = [
+        escapeHtml(rarityLabel(item)),
+        escapeHtml(typeMeta.label),
+        mergeable ? 'Empilhavel' : null,
+        !equippable ? containerItemTooltipTag(item) : null,
+    ].filter(Boolean);
+
+    const allProperties = (Array.isArray(item.properties) ? item.properties : [])
+        .filter((property) => !isSocketedGemProperty(property));
+    const affixes = jewel ? [] : (Array.isArray(item.affixes) ? item.affixes : []);
+    const sockets = equippable ? (Array.isArray(item.sockets) ? item.sockets : []) : [];
+
+    const hiddenPropertyCodes = new Set(['upgrade_level', 'upgrade_success_rate', 'socket_count']);
+    const baseProperties = equippable
+        ? allProperties
+            .filter((property) => {
+                const code = String(property.code || '');
+                const source = String(property.source || '');
+                return BASE_STAT_CODES.includes(code) && (source === 'base' || source === 'definition' || source === 'upgrade');
+            })
+            .sort((a, b) => BASE_STAT_ORDER.indexOf(String(a.code)) - BASE_STAT_ORDER.indexOf(String(b.code)))
+        : [];
+    const otherProperties = equippable
+        ? allProperties.filter((property) => {
+            const code = String(property.code || '');
+            return !BASE_STAT_CODES.includes(code) && !hiddenPropertyCodes.has(code);
+        })
+        : [];
+
+    const baseList = baseProperties.length
+        ? `<ul class="inventory-tooltip-base-stats">${baseProperties.map((property) => renderTooltipStatLine(
+            BASE_STAT_LABELS[property.code] || property.name,
+            tooltipPropertyValue(item, property, { showRange: true, compareWith })
+        )).join('')}</ul>`
+        : '';
+    const affixList = affixes.length
+        ? `<ul class="inventory-tooltip-affixes">${affixes.map((affix) => {
+            const compareAffix = compareWith
+                ? (compareWith.affixes || []).find((entry) => String(entry.property_code || '') === String(affix.property_code || ''))
+                : null;
+            const delta = compareAffix
+                ? formatStatDelta(propertyNumericValue(affix) - propertyNumericValue(compareAffix), affix.unit || '')
+                : '';
+            return renderTooltipStatLine(
+                affix.name,
+                `<strong>+${escapeHtml(formatItemPropertyValue(affix))} ${escapeHtml(affix.property_name || '')}</strong>${delta}`
+            );
+        }).join('')}</ul>`
+        : '';
+    const extraPropertyList = otherProperties.length
+        ? `<ul class="inventory-tooltip-properties">${otherProperties.map((property) => renderTooltipStatLine(
+            property.name,
+            tooltipPropertyValue(item, property, { compareWith })
+        )).join('')}</ul>`
+        : '';
+    const socketList = sockets.length
+        ? `<div class="inventory-tooltip-sockets" aria-label="Engastes">${sockets.map((socket) => renderSocketCell(item, socket)).join('')}</div>`
+        : '';
+    const storage = !equippable ? containerStorageSummary(item) : null;
+    const storageBlock = storage
+        ? `<div class="inventory-tooltip-storage">
+            <div><span>Espaco interno</span><strong>${escapeHtml(storage.label)}</strong></div>
+            <div><span>Ocupacao</span><strong>${escapeHtml(storage.detail)}</strong></div>
+        </div>`
+        : '';
+
+    const metaBlock = equippable
+        ? ''
+        : `
+            <dl class="inventory-tooltip-meta">
+                ${!mergeable ? `<div><dt>Codigo</dt><dd>${escapeHtml(item.definition?.code || '-')}</dd></div>` : ''}
+                ${mergeable || quantity > 1 ? `<div><dt>Quantidade</dt><dd>${quantity}</dd></div>` : ''}
+                ${!mergeable && item.quality_value !== null && item.quality_value !== undefined ? `<div><dt>Qualidade</dt><dd>${Number(item.quality_value).toFixed(1)}</dd></div>` : ''}
+            </dl>
+            ${mergeable || jewel ? tooltipSaleBlock() : ''}
+            <small class="inventory-tooltip-hint">Arraste para mover. Pressione R ou Q durante o arraste para rotacionar.</small>
+        `;
+
+    const jewelProperties = jewel ? jewelTooltipProperties(item) : '';
+    const setBlock = equippable ? renderTooltipSetBlock(item) : '';
+    const powerBlock = equippable && power > 0
+        ? `<div class="inventory-tooltip-power">
+            <span>Poder do item</span>
+            <strong>${power}${powerDelta}</strong>
+        </div>`
+        : '';
+    const compareHeader = compareWith
+        ? `<div class="inventory-tooltip-compare-note">Comparando com <strong>${escapeHtml(itemLabel(compareWith))}</strong>${item.equipped ? ' no inventario' : ' equipado'}</div>`
+        : '';
+
+    const consumableBlock = categoryCode === 'consumable' || categoryCode === 'currency'
+        ? `<div class="inventory-tooltip-section">
+            <h4>Uso</h4>
+            <p>${item.definition?.description ? escapeHtml(item.definition.description) : 'Item consumivel ou moeda.'}</p>
+            ${mergeable || quantity > 1 ? `<p><strong>Quantidade:</strong> ${quantity}</p>` : ''}
+            ${tooltipSaleBlock()}
+        </div>`
+        : '';
+
+    const materialBlock = categoryCode === 'material' && !jewel
+        ? `<div class="inventory-tooltip-section">
+            <h4>Material</h4>
+            ${mergeable || quantity > 1 ? `<p><strong>Quantidade:</strong> ${quantity}</p>` : ''}
+            ${item.definition?.description ? `<p>${escapeHtml(item.definition.description)}</p>` : ''}
+        </div>`
+        : '';
+
+    const details = [
+        compareHeader,
+        !inline && !jewel && categoryCode !== 'consumable' && categoryCode !== 'currency' && item.definition?.description
+            ? `<p class="inventory-tooltip-description">${escapeHtml(item.definition.description)}</p>`
+            : '',
+        powerBlock,
+        jewel ? jewelProperties : baseList,
+        jewel ? '' : affixList,
+        jewel ? '' : extraPropertyList,
+        socketList,
+        setBlock,
+        storageBlock,
+        consumableBlock,
+        materialBlock,
+        metaBlock,
+    ].filter(Boolean).join('');
+
+    const hero = inline ? '' : renderTooltipHero(item);
+    const titleBlock = inline
+        ? `<div class="inventory-tooltip-head">
             <div class="inventory-tooltip-title">${escapeHtml(itemLabel(item))}</div>
+            ${equippable && upgradeLevel > 0 ? `<span class="inventory-tooltip-upgrade" title="Nivel de melhoria">+${upgradeLevel}</span>` : ''}
+        </div>`
+        : '';
+
+    return `
+        <div class="inventory-tooltip rarity-${rarityKey(item)} is-type-${escapeHtml(categoryCode)}${inline ? ' is-inline' : ''}">
+            ${hero}
+            ${titleBlock}
             <div class="inventory-tooltip-tags">${tags.map((tag) => `<span>${tag}</span>`).join('')}</div>
             ${details}
         </div>
@@ -133,10 +947,47 @@ function itemAssetUrl(item) {
 function persistContainerPanels() {
     localStorage.setItem('evolvaxe.inventory.openContainers', JSON.stringify([...openContainerPublicIds]));
     localStorage.setItem('evolvaxe.inventory.marketDeliveryOpen', marketDeliveryOpen ? '1' : '0');
+    localStorage.setItem('evolvaxe.inventory.expeditionCarryOpen', expeditionCarryOpen ? '1' : '0');
 }
 
 function persistCharacterPanel() {
     localStorage.setItem('evolvaxe.inventory.characterPanelOpen', characterPanelOpen ? '1' : '0');
+}
+
+function persistSplitView() {
+    if (splitViewState) {
+        localStorage.setItem('evolvaxe.inventory.splitView', JSON.stringify(splitViewState));
+    } else {
+        localStorage.removeItem('evolvaxe.inventory.splitView');
+    }
+}
+
+function clearSplitView() {
+    splitViewState = null;
+    persistSplitView();
+}
+
+function isChestContainerItem(item) {
+    const linkedCode = String(item?.linked_container?.definition_code || '');
+    if (linkedCode.includes('chest')) return true;
+
+    const baseConfig = item?.definition?.base_config;
+    if (typeof baseConfig === 'string' && baseConfig.includes('chest')) return true;
+    if (baseConfig && typeof baseConfig === 'object' && String(baseConfig.container_definition || '').includes('chest')) {
+        return true;
+    }
+
+    return false;
+}
+
+function findMainInventoryContainer(containers = []) {
+    return containers.find((container) => containerKind(container) === 'main') || null;
+}
+
+function toggleExpeditionPanel() {
+    expeditionCarryOpen = !expeditionCarryOpen;
+    persistContainerPanels();
+    loadInventory();
 }
 
 function containerKind(container) {
@@ -152,10 +1003,20 @@ function containerKind(container) {
     return 'secondary';
 }
 
+function isEquippedBackpackContainer(container) {
+    if (!equippedBackpackPublicId || !container?.source_item_public_id) return false;
+    return container.source_item_public_id === equippedBackpackPublicId;
+}
+
 function isContainerVisible(container) {
+    if (isEquippedBackpackContainer(container)) {
+        return false;
+    }
+
     const kind = containerKind(container);
     if (kind === 'main') return true;
     if (kind === 'market_delivery') return marketDeliveryOpen;
+    if (kind === 'expedition_carry') return expeditionCarryOpen;
 
     return openContainerPublicIds.has(container.public_id);
 }
@@ -169,6 +1030,8 @@ function toggleContainer(container) {
     const kind = containerKind(container);
     if (kind === 'market_delivery') {
         marketDeliveryOpen = !marketDeliveryOpen;
+    } else if (kind === 'expedition_carry') {
+        expeditionCarryOpen = !expeditionCarryOpen;
     } else if (openContainerPublicIds.has(container.public_id)) {
         openContainerPublicIds.delete(container.public_id);
     } else {
@@ -179,10 +1042,66 @@ function toggleContainer(container) {
     loadInventory();
 }
 
+function containerDisplayName(container) {
+    const kind = containerKind(container);
+    if (kind === 'expedition_carry') {
+        const backpackSlot = currentEquipment.find((slot) => slot.code === 'backpack');
+        if (backpackSlot?.item) {
+            return `Expedicao (${itemLabel(backpackSlot.item)})`;
+        }
+
+        return 'Bolsos (2x2)';
+    }
+
+    if (container.source_item_public_id) {
+        const sourceItem = [...itemIndex.values()].find((entry) => entry.item?.public_id === container.source_item_public_id)?.item;
+        if (sourceItem) {
+            return itemLabel(sourceItem);
+        }
+    }
+
+    return container.name;
+}
+
+function containerDisplayHint(container) {
+    const kind = containerKind(container);
+    if (kind === 'expedition_carry') {
+        const backpackSlot = currentEquipment.find((slot) => slot.code === 'backpack');
+        if (!backpackSlot?.item) {
+            return 'Espaco minimo de expedicao nos bolsos';
+        }
+
+        const linked = backpackSlot.item.linked_container?.grid;
+        const backpackCols = linked
+            ? Number(linked.columns || 0)
+            : Math.max(0, Number(container.grid.columns) - 2);
+        const backpackRows = linked
+            ? Number(linked.rows || 0)
+            : Number(container.grid.rows);
+        return `Bolsos 2x2 + Mochila ${backpackCols}x${backpackRows}`;
+    }
+
+    return container.definition_code;
+}
+
+function shouldShowContainerInDock(container) {
+    if (containerKind(container) === 'main') return false;
+    if (isEquippedBackpackContainer(container)) return false;
+    if (container.source_item_public_id && !openContainerPublicIds.has(container.public_id)) {
+        return false;
+    }
+    return true;
+}
+
 function gridElement(container) {
     const host = document.createElement('div');
     host.className = 'inventory-grid-host';
     host.dataset.containerPublicId = container.public_id;
+
+    if (containerKind(container) === 'expedition_carry' && equippedBackpackPublicId) {
+        host.dataset.expeditionLayout = 'combined';
+        host.style.setProperty('--pocket-columns', '2');
+    }
 
     const grid = document.createElement('div');
     grid.className = 'grid-stack inventory-grid';
@@ -211,7 +1130,7 @@ function occupancyLabel(container, summaryEntry) {
     return `${summaryEntry.item_count} item(ns) - ${percent}%`;
 }
 
-function renderItem(item) {
+function renderItem(item, options = {}) {
     const quantity = Number(item.quantity || 1);
     const name = itemLabel(item);
     const assetUrl = itemAssetUrl(item);
@@ -226,6 +1145,7 @@ function renderItem(item) {
         isContainer ? 'is-container-item' : '',
         assetUrl ? 'has-art' : '',
         `rarity-${rarity}`,
+        options.ghost ? 'is-equipment-ghost' : '',
         placement.rotated ? 'is-rotated' : '',
         footprintArea <= 1 ? 'is-tiny' : '',
         footprintArea <= 2 ? 'is-compact' : '',
@@ -237,11 +1157,26 @@ function renderItem(item) {
     return `
         <div class="${classes}" data-item-public-id="${escapeHtml(item.public_id)}" aria-label="${escapeHtml(itemLabel(item))}">
             ${assetUrl ? `<img class="inventory-item-art" src="${escapeHtml(assetUrl)}" alt="" loading="lazy" onerror="this.closest('.inventory-item')?.classList.add('has-missing-art'); this.remove();">` : ''}
-            ${isContainer ? '<span class="inventory-item-badge">Container</span>' : ''}
+            ${renderItemTypeBadge(item)}
+            ${containerItemBadge(item)}
             <span class="inventory-item-name">${escapeHtml(name)}</span>
             ${quantity > 1 ? `<span class="inventory-item-quantity">x${quantity}</span>` : ''}
         </div>
     `;
+}
+
+function renderContainerBreadcrumb(container) {
+    const chain = Array.isArray(container.parent_chain) ? container.parent_chain : [];
+    if (!chain.length) return '';
+
+    const crumbs = chain.map((entry) => {
+        const label = entry.source_item_name || entry.container_name || entry.definition_code || 'Container';
+        return `<button type="button" class="inventory-breadcrumb-link" data-breadcrumb-container="${escapeHtml(entry.container_public_id)}">${escapeHtml(label)}</button>`;
+    });
+
+    crumbs.push(`<span class="inventory-breadcrumb-current">${escapeHtml(containerDisplayName(container))}</span>`);
+
+    return `<nav class="inventory-container-breadcrumb" aria-label="Navegacao de containers">${crumbs.join('<span aria-hidden="true">›</span>')}</nav>`;
 }
 
 function renderContainer(container, summaryEntry = null) {
@@ -256,27 +1191,157 @@ function renderContainer(container, summaryEntry = null) {
     const badge = isPhysical
         ? '<span class="inventory-container-badge">Fisico</span>'
         : '';
+    const acceptanceBadge = container.acceptance_summary?.label
+        ? `<span class="inventory-container-acceptance">${escapeHtml(container.acceptance_summary.label)}</span>`
+        : '';
+    const breadcrumb = renderContainerBreadcrumb(container);
+    const canOrganize = !['expedition_carry', 'market_delivery'].includes(containerKind(container));
+
+    const canClose = isPhysical || containerKind(container) === 'market_delivery' || containerKind(container) === 'expedition_carry';
 
     section.innerHTML = `
         <header class="inventory-container-header">
             <div class="inventory-container-title">
+                ${breadcrumb}
                 <div class="inventory-container-title-row">
-                    <h2>${escapeHtml(container.name)}</h2>
+                    <h2>${escapeHtml(containerDisplayName(container))}</h2>
                     ${badge}
+                    ${acceptanceBadge}
                 </div>
-                <p>${escapeHtml(container.definition_code)}</p>
-                ${isPhysical ? '<p class="inventory-container-link">Vinculado a um item fisico</p>' : ''}
+                <p>${escapeHtml(containerDisplayHint(container))}</p>
+                ${isPhysical ? '<p class="inventory-container-link">Duplo clique no item para abrir ou fechar</p>' : ''}
             </div>
             <div class="inventory-container-meta-block">
                 <span class="inventory-container-meta">${Number(container.grid.columns)}x${Number(container.grid.rows)}</span>
                 <span class="inventory-container-occupancy">${escapeHtml(occupancyLabel(container, summaryEntry))}</span>
+                ${canOrganize ? '<button type="button" class="inventory-button inventory-container-organize" data-container-organize>Organizar</button>' : ''}
+                ${canClose ? '<button type="button" class="inventory-container-close" aria-label="Fechar container">×</button>' : ''}
             </div>
         </header>
         <div class="inventory-grid-wrap"></div>
     `;
 
+    section.querySelector('.inventory-container-close')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (splitViewState?.childPublicId === container.public_id) {
+            clearSplitView();
+        }
+        toggleContainer(container);
+    });
+
+    section.querySelector('[data-container-organize]')?.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await organizeContainer(container.public_id);
+    });
+
+    section.querySelectorAll('[data-breadcrumb-container]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            const targetPublicId = button.dataset.breadcrumbContainer;
+            if (!targetPublicId) return;
+            if (containerKind(container) !== 'main' && splitViewState) {
+                splitViewState = { ...splitViewState, childPublicId: targetPublicId };
+                persistSplitView();
+            }
+            openContainer(targetPublicId);
+            loadInventory();
+        });
+    });
+
     section.querySelector('.inventory-grid-wrap').appendChild(gridElement(container));
     return section;
+}
+
+function renderSplitLayout(parentContainer, childContainer, summaryByPublicId) {
+    const host = document.createElement('section');
+    host.className = 'inventory-split-layout';
+    host.innerHTML = `
+        <header class="inventory-split-header">
+            <div>
+                <p class="inventory-kicker">Armazenamento aninhado</p>
+                <h2>${escapeHtml(containerDisplayName(childContainer))}</h2>
+            </div>
+            <button type="button" class="inventory-button inventory-split-close">Fechar split</button>
+        </header>
+        <div class="inventory-split-panels"></div>
+    `;
+
+    const panels = host.querySelector('.inventory-split-panels');
+    panels.appendChild(renderContainer(parentContainer, summaryByPublicId.get(parentContainer.public_id) || null));
+    panels.appendChild(renderContainer(childContainer, summaryByPublicId.get(childContainer.public_id) || null));
+
+    host.querySelector('.inventory-split-close')?.addEventListener('click', () => {
+        clearSplitView();
+        if (childContainer.public_id) {
+            openContainerPublicIds.delete(childContainer.public_id);
+            persistContainerPanels();
+        }
+        loadInventory();
+    });
+
+    return host;
+}
+
+async function organizeContainer(containerPublicId) {
+    if (actionInFlight || loading) return;
+
+    actionInFlight = true;
+    try {
+        setStatus('Organizando...');
+        const response = await apiFetch(`/api/inventory/containers/${encodeURIComponent(containerPublicId)}/organize`, {
+            method: 'POST',
+        });
+        const moved = Number(response.data?.moved_items || 0);
+        toast(moved > 0 ? `Container reorganizado (${moved} item(ns) movido(s)).` : 'Container ja estava organizado.', 'success', 2800);
+        setStatus('Sincronizado');
+        await loadInventory();
+    } catch (error) {
+        handleError(error, 'Nao foi possivel organizar o container.');
+    } finally {
+        actionInFlight = false;
+    }
+}
+
+async function renameInventoryItem(item) {
+    const currentName = itemLabel(item);
+    const nextName = window.prompt('Nome personalizado do item (vazio restaura o padrao):', currentName);
+    if (nextName === null) return;
+
+    try {
+        setStatus('Renomeando item...');
+        await apiFetch(`/api/inventory/items/${encodeURIComponent(item.public_id)}/rename`, {
+            method: 'PATCH',
+            body: { item_name: nextName.trim() },
+        });
+        toast('Item renomeado.', 'success', 2400);
+        setStatus('Sincronizado');
+        await loadInventory();
+    } catch (error) {
+        handleError(error, 'Nao foi possivel renomear o item.');
+    }
+}
+
+async function useEquippedPotionHotkey(slotCode) {
+    const slot = currentEquipment.find((entry) => entry.code === slotCode);
+    if (!slot?.item) {
+        toast('Nenhum consumivel equipado neste atalho.', 'info', 2400);
+        return;
+    }
+
+    try {
+        const response = await apiFetch(`/api/items/${encodeURIComponent(slot.item.public_id)}/actions`);
+        const useAction = (response.data?.actions || []).find((action) => action.code === 'USE');
+        if (!useAction) {
+            toast('Este slot nao possui acao de uso rapido.', 'info', 2600);
+            return;
+        }
+
+        await executeItemAction(slot.item, useAction);
+    } catch (error) {
+        handleError(error, 'Nao foi possivel usar o consumivel.');
+    }
 }
 
 function renderEquipment(equipment = [], stats = [], links = [], setBonuses = []) {
@@ -312,14 +1377,19 @@ function renderEquipment(equipment = [], stats = [], links = [], setBonuses = []
     `;
 
     equipmentRoot.querySelector('[data-character-toggle]')?.addEventListener('click', () => toggleCharacterPanel());
-    renderCharacterStats(stats, setBonuses);
+    renderCharacterStats(stats, setBonuses, playerPower);
 
     if (!characterPanelOpen) {
         return;
     }
 
     renderEquipmentSlots(equipment);
-    window.requestAnimationFrame(() => renderEquipmentLinks(links));
+    window.requestAnimationFrame(() => renderEquipmentLinks(links, setBonuses));
+}
+
+function isTwoHandedWeapon(item) {
+    const hands = Number(item?.definition?.base_config?.hands || 0);
+    return hands >= 2;
 }
 
 function renderEquipmentSlots(equipment = []) {
@@ -327,64 +1397,85 @@ function renderEquipmentSlots(equipment = []) {
     if (!stage) return;
 
     const byCode = new Map(equipment.map((slot) => [slot.code, slot]));
-    const offhand = ['weapon_offhand', 'shield', 'quiver']
+    const weaponSlot = byCode.get('weapon');
+    const twoHandedWeapon = weaponSlot?.item && isTwoHandedWeapon(weaponSlot.item) ? weaponSlot.item : null;
+    const occupiedOffhand = ['weapon_offhand', 'shield', 'quiver']
         .map((code) => byCode.get(code))
-        .find((slot) => slot?.item) || { code: 'offhand', name: 'Offhand', item: null };
+        .find((slot) => slot?.item) || null;
+    const offhand = occupiedOffhand || { code: 'offhand', name: 'Offhand', item: null };
+    const offhandGhost = !occupiedOffhand && twoHandedWeapon ? twoHandedWeapon : null;
 
     const visualSlots = [
-        byCode.get('pet'),
-        byCode.get('helmet'),
-        byCode.get('wings'),
-        byCode.get('weapon'),
-        byCode.get('chest'),
-        offhand,
-        byCode.get('amulet'),
-        byCode.get('belt'),
-        byCode.get('ring'),
-        byCode.get('ring_2'),
-        byCode.get('gloves'),
-        byCode.get('pants'),
-        byCode.get('boots'),
-    ].filter(Boolean);
+        { slot: byCode.get('pet') },
+        { slot: byCode.get('helmet') },
+        { slot: byCode.get('wings') },
+        { slot: byCode.get('weapon') },
+        { slot: byCode.get('chest') },
+        { slot: offhand, ghostItem: offhandGhost },
+        { slot: byCode.get('gloves') },
+        { slot: byCode.get('pants') },
+        { slot: byCode.get('boots') },
+        { slot: byCode.get('amulet') },
+        { slot: byCode.get('earring') },
+        { slot: byCode.get('ring') },
+        { slot: byCode.get('ring_2') },
+        { slot: byCode.get('backpack') },
+    ].filter((entry) => entry.slot);
 
-    for (const slot of visualSlots) {
-        stage.appendChild(equipmentSlotNode(slot));
+    for (const entry of visualSlots) {
+        stage.appendChild(equipmentSlotNode(entry.slot, { ghostItem: entry.ghostItem || null }));
     }
 }
 
-function equipmentSlotNode(slot) {
+function equipmentSlotNode(slot, options = {}) {
+    const ghostItem = options.ghostItem || null;
+    const displayItem = slot.item || ghostItem;
+    const isGhostOccupied = Boolean(!slot.item && ghostItem);
     const node = document.createElement('article');
     const visualCode = ['weapon_offhand', 'shield', 'quiver'].includes(slot.code) ? 'offhand' : slot.code;
-    node.className = `inventory-equipment-slot is-${escapeHtml(visualCode)}${slot.item ? ' has-item' : ''}`;
+    const rarityClass = displayItem ? ` rarity-${rarityKey(displayItem)}` : '';
+    node.className = `inventory-equipment-slot is-${escapeHtml(visualCode)}${displayItem ? ' has-item' : ''}${isGhostOccupied ? ' is-ghost-occupied' : ''}${rarityClass}`;
     node.dataset.equipmentSlot = slot.code;
     node.dataset.visualSlot = visualCode;
+    if (isGhostOccupied) {
+        node.dataset.ghostOccupied = '1';
+        node.title = 'Ocupado por arma de duas maos';
+    }
 
-    if (!slot.item) {
+    if (!displayItem) {
         node.innerHTML = `
-            <span class="inventory-equipment-slot-name">${escapeHtml(equipmentSlotLabel(slot))}</span>
-            <span class="inventory-equipment-empty">Vazio</span>
+            ${renderEquipmentSlotIcon(slot.code)}
+            <span class="inventory-equipment-empty" aria-hidden="true"></span>
         `;
         return node;
     }
 
     node.innerHTML = `
-        <span class="inventory-equipment-slot-name">${escapeHtml(equipmentSlotLabel(slot))}</span>
-        <div class="inventory-equipment-item-shell">${renderItem(slot.item)}</div>
+        ${renderEquipmentSlotIcon(slot.code)}
+        <div class="inventory-equipment-item-shell${isGhostOccupied ? ' is-ghost-shell' : ''}">${renderItem(displayItem, { ghost: isGhostOccupied })}</div>
+        ${!isGhostOccupied && slot.item ? renderUpgradeStars(slot.item) : ''}
     `;
 
     const itemNode = node.querySelector('.inventory-item');
-    itemNode?.addEventListener('contextmenu', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        await openContextMenu(event, slot.item);
-    });
-    itemNode?.addEventListener('dblclick', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        await openLinkedContainerForItem(slot.item);
-    });
+    if (!isGhostOccupied) {
+        itemNode?.addEventListener('contextmenu', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            await openContextMenu(event, slot.item);
+        });
+        itemNode?.addEventListener('dblclick', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            await openLinkedContainerForItem(slot.item);
+        });
+    } else {
+        itemNode?.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+    }
 
-    if (itemNode && window.tippy) {
+    if (itemNode && window.tippy && !isGhostOccupied) {
         window.tippy(itemNode, {
             allowHTML: true,
             appendTo: () => document.body,
@@ -411,16 +1502,32 @@ function equipmentSlotElement(slotCode) {
         || equipmentRoot.querySelector(`[data-visual-slot="${visual}"]`);
 }
 
-function renderEquipmentLinks(links = []) {
+function renderEquipmentLinks(links = [], setBonuses = []) {
     const svg = equipmentRoot.querySelector('[data-equipment-links]');
     const paperdoll = equipmentRoot.querySelector('.inventory-paperdoll');
     if (!svg || !paperdoll) return;
 
     svg.replaceChildren();
+    equipmentRoot.querySelectorAll('.inventory-equipment-slot.is-set-glow-1, .inventory-equipment-slot.is-set-glow-2, .inventory-equipment-slot.is-set-glow-3')
+        .forEach((node) => {
+            node.classList.remove('is-set-glow-1', 'is-set-glow-2', 'is-set-glow-3');
+            node.style.removeProperty('--set-aura-color');
+        });
 
     for (const link of links) {
         const slots = Array.isArray(link.slots) ? link.slots : [];
         if (slots.length < 2) continue;
+
+        const color = /^#[0-9a-f]{6}$/i.test(String(link.aura_color || '')) ? link.aura_color : '#55c58a';
+        const glowLevel = setGlowLevel(link.set_code, setBonuses);
+        const glowClass = glowLevel > 0 ? `is-set-glow-${glowLevel}` : '';
+
+        for (const slot of slots) {
+            const element = equipmentSlotElement(slot.slot_code);
+            if (!element || !glowClass) continue;
+            element.classList.add(glowClass);
+            element.style.setProperty('--set-aura-color', color);
+        }
 
         const points = slots
             .map((slot) => equipmentSlotElement(slot.slot_code))
@@ -436,7 +1543,6 @@ function renderEquipmentLinks(links = []) {
 
         if (points.length < 2) continue;
 
-        const color = /^#[0-9a-f]{6}$/i.test(String(link.aura_color || '')) ? link.aura_color : '#55c58a';
         for (let index = 0; index < points.length - 1; index += 1) {
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             line.setAttribute('x1', String(points[index].x));
@@ -444,7 +1550,11 @@ function renderEquipmentLinks(links = []) {
             line.setAttribute('x2', String(points[index + 1].x));
             line.setAttribute('y2', String(points[index + 1].y));
             line.setAttribute('stroke', color);
-            line.setAttribute('class', 'inventory-equipment-link-line');
+            line.setAttribute('class', `inventory-equipment-link-line${glowClass ? ` ${glowClass}` : ''}`);
+            if (glowLevel > 0) {
+                line.setAttribute('stroke-width', String(1.5 + glowLevel));
+                line.setAttribute('opacity', String(0.55 + (glowLevel * 0.15)));
+            }
             svg.appendChild(line);
         }
     }
@@ -475,12 +1585,32 @@ function equipmentSlotLabel(slot) {
     return labels[visualCode] || slot.name;
 }
 
-function renderCharacterStats(stats = [], setBonuses = []) {
+function renderCharacterStats(stats = [], setBonuses = [], power = null) {
     const root = equipmentRoot?.querySelector('[data-character-stats]');
     if (!root) return;
 
     const visibleStats = stats.filter((stat) => Number(stat.value || 0) !== 0);
-    if (!visibleStats.length) {
+    const attack = Number(power?.attack || 0);
+    const armor = Number(power?.armor || 0);
+    const life = Number(power?.life || 0);
+    const total = Number(power?.total || 0);
+    const hasCorePower = attack > 0 || armor > 0 || life > 0 || total > 0;
+
+    const coreBlock = hasCorePower
+        ? `<div class="inventory-character-power-core">
+            <div class="inventory-character-power-total">
+                <span>Poder total</span>
+                <strong>${total > 0 ? total.toLocaleString('pt-BR') : '—'}</strong>
+            </div>
+            <div class="inventory-character-power-metrics">
+                <div><span>Ataque</span><strong>${attack > 0 ? attack.toLocaleString('pt-BR') : '—'}</strong></div>
+                <div><span>Armadura</span><strong>${armor > 0 ? armor.toLocaleString('pt-BR') : '—'}</strong></div>
+                <div><span>Vida</span><strong>${life > 0 ? life.toLocaleString('pt-BR') : '—'}</strong></div>
+            </div>
+        </div>`
+        : '';
+
+    if (!visibleStats.length && !setBonuses.length && !hasCorePower) {
         root.innerHTML = '<strong>Status</strong><span class="inventory-character-stat-empty">Sem bonus equipados.</span>';
         return;
     }
@@ -497,11 +1627,12 @@ function renderCharacterStats(stats = [], setBonuses = []) {
 
     root.innerHTML = `
         <strong>Status</strong>
-        ${visibleStats.map((stat) => {
+        ${coreBlock}
+        ${visibleStats.length ? `<div class="inventory-character-stat-list">${visibleStats.map((stat) => {
             const numeric = Number(stat.value || 0);
             const value = Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
             return `<div class="inventory-character-stat-row"><span>${escapeHtml(stat.name)}</span><b>${escapeHtml(value)}${stat.unit ? escapeHtml(stat.unit) : ''}</b></div>`;
-        }).join('')}
+        }).join('')}</div>` : ''}
         ${bonusList}
     `;
 }
@@ -515,7 +1646,7 @@ function toggleCharacterPanel() {
 function renderContainerDock(containers = []) {
     if (!dockRoot) return;
 
-    const secondary = containers.filter((container) => containerKind(container) !== 'main');
+    const secondary = containers.filter(shouldShowContainerInDock);
     if (!secondary.length) {
         dockRoot.hidden = true;
         dockRoot.replaceChildren();
@@ -527,7 +1658,7 @@ function renderContainerDock(containers = []) {
     dockRoot.innerHTML = `
         <div class="inventory-dock-label">
             <strong>Armazenamento</strong>
-            <span>Abra mochilas, expedição e entregas quando precisar.</span>
+            <span>Expedicao, entregas e containers abertos. Duplo clique em mochilas/baus para abrir.</span>
         </div>
         <div class="inventory-dock-actions"></div>
     `;
@@ -540,8 +1671,8 @@ function renderContainerDock(containers = []) {
         button.className = `inventory-dock-button is-${kind}${isContainerVisible(container) ? ' is-open' : ''}`;
         button.dataset.containerPublicId = container.public_id;
         button.innerHTML = `
-            <span>${escapeHtml(container.name)}</span>
-            <small>${escapeHtml(container.definition_code)} - ${Number(container.grid.columns)}x${Number(container.grid.rows)}</small>
+            <span>${escapeHtml(containerDisplayName(container))}</span>
+            <small>${escapeHtml(containerDisplayHint(container))} - ${Number(container.grid.columns)}x${Number(container.grid.rows)}</small>
         `;
         button.addEventListener('click', () => toggleContainer(container));
         actions.appendChild(button);
@@ -563,11 +1694,101 @@ function ghostElementForContainer(containerPublicId) {
     return document.querySelector(`[data-placement-ghost="${containerPublicId}"]`);
 }
 
+function resolveJewelType(item) {
+    const code = String(item?.definition?.code || '');
+    if (BLESS_JEWEL_CODES.includes(code)) return 'bless';
+    if (SOUL_JEWEL_CODES.includes(code)) return 'soul';
+    if (CHAOS_JEWEL_CODES.includes(code)) return 'chaos';
+    if (REROLL_JEWEL_CODES.includes(code)) return 'reroll';
+    return null;
+}
+
+function equipmentSlotVisualCode(slotCode) {
+    return ['weapon_offhand', 'shield', 'quiver', 'offhand'].includes(slotCode) ? 'offhand' : slotCode;
+}
+
+function equipmentSlotIconUrl(slotCode) {
+    const file = EQUIPMENT_SLOT_ICON_FILES[equipmentSlotVisualCode(slotCode)];
+    return file ? `/assets/game/icons/${file}` : null;
+}
+
+function renderEquipmentSlotIcon(slotCode) {
+    const iconUrl = equipmentSlotIconUrl(slotCode);
+    if (!iconUrl) {
+        return '';
+    }
+
+    return `
+        <span class="inventory-equipment-slot-icon" aria-hidden="true">
+            <img src="${escapeHtml(iconUrl)}" alt="" loading="lazy" onerror="this.closest('.inventory-equipment-slot-icon')?.classList.add('is-missing-icon'); this.remove();">
+        </span>
+    `;
+}
+
+function isJewelItem(item) {
+    const code = String(item?.definition?.code || '');
+    return resolveJewelType(item) !== null || code.startsWith('jewel_') || item?.definition?.base_config?.enhancement_type === 'upgrade_jewel';
+}
+
+function isEnhanceableEquipment(item) {
+    if (!item?.definition?.equip_slot_code) return false;
+    if (item.definition?.stackable) return false;
+    return true;
+}
+
+function canAttemptEnhance(jewel, target) {
+    if (!jewel || !target) return false;
+    if (jewel.public_id === target.public_id) return false;
+    if (!isJewelItem(jewel)) return false;
+    return isEnhanceableEquipment(target);
+}
+
+function findEnhanceTarget(snapshot, x, y, w, h, sourceItem) {
+    const overlaps = findOverlappingPlacements(snapshot, x, y, w, h);
+    if (overlaps.length !== 1) return null;
+
+    const target = itemIndex.get(overlaps[0].id)?.item;
+    if (!target || !canAttemptEnhance(sourceItem, target)) return null;
+
+    return {
+        target,
+        jewelType: resolveJewelType(sourceItem),
+    };
+}
+
+function isGemItem(item) {
+    const code = String(item?.definition?.code || '');
+    return code.startsWith('gem_');
+}
+
+function hasEmptySocket(item) {
+    const sockets = Array.isArray(item?.sockets) ? item.sockets : [];
+    return sockets.some((socket) => socket.status === 'empty' || !socket.gem);
+}
+
+function canAttemptSocket(gem, target) {
+    if (!gem || !target) return false;
+    if (gem.public_id === target.public_id) return false;
+    if (!isGemItem(gem)) return false;
+    if (!isEnhanceableEquipment(target)) return false;
+    return hasEmptySocket(target);
+}
+
+function findSocketTarget(snapshot, x, y, w, h, sourceItem) {
+    const overlaps = findOverlappingPlacements(snapshot, x, y, w, h);
+    if (overlaps.length !== 1) return null;
+
+    const target = itemIndex.get(overlaps[0].id)?.item;
+    if (!target || !canAttemptSocket(sourceItem, target)) return null;
+
+    return { target };
+}
+
 function clearAllGhostPreviews() {
     for (const ghost of document.querySelectorAll('[data-placement-ghost]')) {
         ghost.hidden = true;
         ghost.replaceChildren();
-        ghost.classList.remove('is-valid', 'is-invalid', 'is-merge', 'is-deposit');
+        ghost.classList.remove('is-valid', 'is-invalid', 'is-merge', 'is-deposit', 'is-bless', 'is-soul', 'is-chaos', 'is-reroll', 'is-socket');
     }
 }
 
@@ -575,7 +1796,7 @@ function cleanupDragUi() {
     clearAllGhostPreviews();
     document.querySelectorAll('.grid-stack-placeholder').forEach((placeholder) => placeholder.remove());
     document
-        .querySelectorAll('.inventory-placement-valid, .inventory-placement-invalid, .inventory-placement-merge, .inventory-placement-deposit, .inventory-rotated-preview')
+        .querySelectorAll('.inventory-placement-valid, .inventory-placement-invalid, .inventory-placement-merge, .inventory-placement-deposit, .inventory-placement-bless, .inventory-placement-soul, .inventory-placement-chaos, .inventory-placement-reroll, .inventory-placement-socket, .inventory-rotated-preview')
         .forEach((element) => clearPlacementHint(element));
     document.querySelectorAll('.inventory-rotation-helper').forEach((element) => clearRotationHelper(element));
 }
@@ -709,6 +1930,27 @@ function evaluatePlacement(containerPublicId, grid, itemPublicId, x, y, w, h, po
     }
 
     const snapshot = targetSnapshotForGrid(containerPublicId, grid, itemPublicId);
+
+    if (isJewelItem(current.item)) {
+        const enhanceTarget = findEnhanceTarget(snapshot, x, y, w, h, current.item);
+        if (enhanceTarget) {
+            return {
+                state: enhanceTarget.jewelType,
+                overlapItem: enhanceTarget.target,
+            };
+        }
+    }
+
+    if (isGemItem(current.item)) {
+        const socketTarget = findSocketTarget(snapshot, x, y, w, h, current.item);
+        if (socketTarget) {
+            return {
+                state: 'socket',
+                overlapItem: socketTarget.target,
+            };
+        }
+    }
+
     const mergeTarget = findMergeTarget(snapshot, x, y, w, h, current.item);
     if (mergeTarget) {
         return { state: 'merge', overlapItem: mergeTarget };
@@ -730,7 +1972,7 @@ function renderGhostPreview(containerPublicId, x, y, w, h, state) {
     if (!ghost) return;
 
     ghost.hidden = false;
-    ghost.classList.remove('is-valid', 'is-invalid', 'is-merge');
+    ghost.classList.remove('is-valid', 'is-invalid', 'is-merge', 'is-deposit', 'is-bless', 'is-soul', 'is-chaos', 'is-reroll', 'is-socket');
     ghost.classList.add(`is-${state}`);
     ghost.replaceChildren();
 
@@ -827,12 +2069,22 @@ function applyPlacementHintClasses(element, state, rotated = false) {
         'inventory-placement-invalid',
         'inventory-placement-merge',
         'inventory-placement-deposit',
+        'inventory-placement-bless',
+        'inventory-placement-soul',
+        'inventory-placement-chaos',
+        'inventory-placement-reroll',
+        'inventory-placement-socket',
         'inventory-rotated-preview'
     );
     if (state === 'valid') element?.classList.add('inventory-placement-valid');
     if (state === 'invalid') element?.classList.add('inventory-placement-invalid');
     if (state === 'merge') element?.classList.add('inventory-placement-merge');
     if (state === 'deposit') element?.classList.add('inventory-placement-deposit');
+    if (state === 'bless') element?.classList.add('inventory-placement-bless');
+    if (state === 'soul') element?.classList.add('inventory-placement-soul');
+    if (state === 'chaos') element?.classList.add('inventory-placement-chaos');
+    if (state === 'reroll') element?.classList.add('inventory-placement-reroll');
+    if (state === 'socket') element?.classList.add('inventory-placement-socket');
     if (rotated) element?.classList.add('inventory-rotated-preview');
 }
 
@@ -1241,6 +2493,11 @@ function clearPlacementHint(element) {
         'inventory-placement-invalid',
         'inventory-placement-merge',
         'inventory-placement-deposit',
+        'inventory-placement-bless',
+        'inventory-placement-soul',
+        'inventory-placement-chaos',
+        'inventory-placement-reroll',
+        'inventory-placement-socket',
         'inventory-rotated-preview'
     );
 }
@@ -1872,6 +3129,22 @@ async function handleDrop(targetContainerPublicId, node, coords = null) {
         return;
     }
 
+    if ((dropEvaluation.state === 'bless' || dropEvaluation.state === 'soul' || dropEvaluation.state === 'chaos' || dropEvaluation.state === 'reroll') && dropEvaluation.overlapItem) {
+        activeDrag.handled = true;
+        revertItem(interaction.item_public_id);
+        clearActiveDrag();
+        await attemptEnhance(sourceItem, dropEvaluation.overlapItem, dropEvaluation.state);
+        return;
+    }
+
+    if (dropEvaluation.state === 'socket' && dropEvaluation.overlapItem) {
+        activeDrag.handled = true;
+        revertItem(interaction.item_public_id);
+        clearActiveDrag();
+        await attemptSocket(sourceItem, dropEvaluation.overlapItem);
+        return;
+    }
+
     if (!hasPlacementChanged(snapshot, interaction)) {
         clearPlacementHint(node.el);
         clearActiveDrag();
@@ -2098,7 +3371,15 @@ function bindItemShortcuts(container, item, widget) {
         if (!event.ctrlKey && !event.metaKey) return;
         event.preventDefault();
         event.stopPropagation();
-        await quickSplit(container.public_id, item);
+
+        if (isEquippableItem(item)) {
+            openComparePanel(item);
+            return;
+        }
+
+        if (isMergeableItem(item) && Number(item.quantity || 1) > 1) {
+            await quickSplit(container.public_id, item);
+        }
     });
 
     content.addEventListener('contextmenu', async (event) => {
@@ -2167,6 +3448,21 @@ function renderContextMenu(menu, item, actions) {
 
     const list = document.createElement('div');
     list.className = 'inventory-context-menu-list';
+
+    const renameButton = document.createElement('button');
+    renameButton.type = 'button';
+    renameButton.className = 'inventory-context-menu-item';
+    renameButton.innerHTML = `
+        <span class="inventory-context-menu-item-label">Renomear</span>
+        <span class="inventory-context-menu-item-description">Definir nome personalizado</span>
+    `;
+    renameButton.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeContextMenu();
+        await renameInventoryItem(item);
+    });
+    list.appendChild(renameButton);
 
     for (const action of actions) {
         const button = document.createElement('button');
@@ -2241,8 +3537,38 @@ function highlightItem(itemPublicId) {
 }
 
 async function openLinkedContainerForItem(item) {
+    if (item?.definition?.equip_slot_code === 'backpack' && item.public_id === equippedBackpackPublicId) {
+        expeditionCarryOpen = true;
+        persistContainerPanels();
+        await loadInventory();
+        const expedition = [...containerIndex.values()].find((container) => containerKind(container) === 'expedition_carry');
+        if (expedition?.public_id) {
+            highlightContainer(expedition.public_id);
+        }
+        return true;
+    }
+
     const linked = item?.linked_container || itemIndex.get(item?.public_id)?.linked_container || null;
     if (!linked?.public_id) return false;
+
+    if (openContainerPublicIds.has(linked.public_id)) {
+        openContainerPublicIds.delete(linked.public_id);
+        clearSplitView();
+        persistContainerPanels();
+        await loadInventory();
+        return true;
+    }
+
+    const mainContainer = findMainInventoryContainer([...containerIndex.values()]);
+    if (isChestContainerItem(item) && mainContainer) {
+        splitViewState = {
+            parentPublicId: mainContainer.public_id,
+            childPublicId: linked.public_id,
+        };
+        persistSplitView();
+    } else {
+        clearSplitView();
+    }
 
     openContainer(linked.public_id);
     await loadInventory();
@@ -2302,7 +3628,12 @@ async function executeItemAction(item, action) {
 
     if (action.requires_confirmation) {
         const label = action.name || action.code;
-        const confirmed = window.confirm(`Confirmar "${label}" para ${itemLabel(item)}?`);
+        const confirmed = await confirmInventoryAction({
+            title: label,
+            bodyHtml: `<p>Confirmar esta acao em <strong>${escapeHtml(itemLabel(item))}</strong>?</p>`,
+            confirmLabel: label,
+            tone: action.is_destructive ? 'danger' : 'warning',
+        });
         if (!confirmed) return;
     }
 
@@ -2398,6 +3729,180 @@ function addItems(container, grid) {
                 delay: [180, 80],
             });
         }
+    }
+}
+
+async function attemptEnhance(jewelItem, targetItem, jewelType) {
+    if (actionInFlight) return false;
+
+    actionInFlight = true;
+
+    try {
+        setStatus('Avaliando melhoria...');
+        const previewResponse = await apiFetch('/api/inventory/enhance/preview', {
+            method: 'POST',
+            body: {
+                jewel_item_public_id: jewelItem.public_id,
+                target_item_public_id: targetItem.public_id,
+            },
+        });
+        const preview = previewResponse.data || {};
+
+        if (!preview.can_apply) {
+            toast(preview.reason_message || 'Esta joia nao pode ser aplicada neste item.', 'error', 3600);
+            setStatus('Sincronizado');
+            return false;
+        }
+
+        const rate = Number(preview.success_rate || 0);
+        const rateLabel = rate.toFixed(1);
+        const jewelLabel = jewelType === 'bless'
+            ? 'Joia da Bencao'
+            : jewelType === 'soul'
+                ? 'Joia da Alma'
+                : jewelType === 'chaos'
+                    ? 'Joia do Caos'
+                    : 'Joia de Rerrolagem';
+        const lines = [
+            `${jewelLabel} em ${itemLabel(targetItem)}`,
+        ];
+
+        if (jewelType === 'chaos') {
+            lines.push(`Raridade atual: ${preview.current_quality_bucket || 'common'}`);
+            const outcomes = Array.isArray(preview.outcome_chances) ? preview.outcome_chances : [];
+            for (const outcome of outcomes) {
+                const tier = String(outcome.tier || '');
+                const chance = Number(outcome.chance || 0).toFixed(1);
+                lines.push(`${tier === 'failure' ? 'Falha instavel' : `Virar ${tier}`}: ${chance}%`);
+            }
+        } else {
+            lines.push(`Chance de sucesso: ${rateLabel}%`);
+            const breakdown = preview.success_rate_breakdown;
+            if (breakdown) {
+                lines.push(`Base da joia: ${Number(breakdown.base_rate || 0).toFixed(1)}%`);
+                lines.push(`Apos nivel: ${Number(breakdown.after_decay || 0).toFixed(1)}%`);
+                if (Number(breakdown.item_bonus_percent || 0) > 0) {
+                    lines.push(`Bonus do item: +${Number(breakdown.item_bonus_percent).toFixed(1)}%`);
+                }
+            }
+        }
+
+        if (preview.current_upgrade_level != null) {
+            lines.push(`Nivel atual: +${preview.current_upgrade_level}`);
+        }
+        if (preview.affix_count != null) {
+            lines.push(`Atributos no item: ${preview.affix_count}`);
+        }
+        lines.push('A joia sera consumida independentemente do resultado.');
+
+        if (jewelType === 'chaos' || jewelType === 'reroll' || rate < 50) {
+            const confirmed = await confirmInventoryAction({
+                title: jewelLabel,
+                bodyHtml: lines.map((line) => `<p>${escapeHtml(line)}</p>`).join(''),
+                confirmLabel: 'Aplicar joia',
+                tone: jewelType === 'chaos' ? 'danger' : 'warning',
+            });
+            if (!confirmed) {
+                setStatus('Sincronizado');
+                return false;
+            }
+        }
+
+        setStatus('Aplicando joia...');
+        const result = await apiFetch('/api/inventory/enhance', {
+            method: 'POST',
+            body: {
+                jewel_item_public_id: jewelItem.public_id,
+                target_item_public_id: targetItem.public_id,
+                expected_jewel_placement_version: Number(jewelItem.placement?.placement_version || 1),
+                expected_target_placement_version: Number(targetItem.placement?.placement_version || 1),
+                confirm: true,
+            },
+        });
+
+        const data = result.data || {};
+        setStatus('Sincronizado');
+        dragSnapshots.delete(jewelItem.public_id);
+        await loadInventory();
+        showEnhanceResultModal(jewelType, targetItem, data);
+        return true;
+    } catch (error) {
+        handleError(error, 'Melhoria rejeitada pelo servidor.');
+        revertItem(jewelItem.public_id);
+        return false;
+    } finally {
+        actionInFlight = false;
+        clearActiveDrag();
+    }
+}
+
+async function attemptSocket(gemItem, targetItem) {
+    if (actionInFlight) return false;
+
+    actionInFlight = true;
+
+    try {
+        setStatus('Avaliando engaste...');
+        const previewResponse = await apiFetch('/api/inventory/socket/preview', {
+            method: 'POST',
+            body: {
+                gem_item_public_id: gemItem.public_id,
+                target_item_public_id: targetItem.public_id,
+            },
+        });
+        const preview = previewResponse.data || {};
+
+        if (!preview.can_apply) {
+            toast(preview.reason_message || 'Esta gema nao pode ser encaixada neste item.', 'error', 3600);
+            setStatus('Sincronizado');
+            return false;
+        }
+
+        const effect = preview.gem_effect || {};
+        const propertyName = effect.property_name || effect.property || 'Atributo';
+        const lines = [
+            `Encaixar gema em ${itemLabel(targetItem)}`,
+            `Efeito: +${effect.value ?? '?'} ${propertyName}`,
+            `Engastes livres: ${preview.empty_socket_count ?? 1}`,
+            'A gema sera consumida ao confirmar.',
+        ];
+
+        const confirmed = await confirmInventoryAction({
+            title: 'Encaixar gema',
+            bodyHtml: lines.map((line) => `<p>${escapeHtml(line)}</p>`).join(''),
+            confirmLabel: 'Encaixar',
+            tone: 'warning',
+        });
+        if (!confirmed) {
+            setStatus('Sincronizado');
+            return false;
+        }
+
+        setStatus('Encaixando gema...');
+        const result = await apiFetch('/api/inventory/socket', {
+            method: 'POST',
+            body: {
+                gem_item_public_id: gemItem.public_id,
+                target_item_public_id: targetItem.public_id,
+                expected_gem_placement_version: Number(gemItem.placement?.placement_version || 1),
+                expected_target_placement_version: Number(targetItem.placement?.placement_version || 1),
+                confirm: true,
+            },
+        });
+
+        const data = result.data || {};
+        setStatus('Sincronizado');
+        dragSnapshots.delete(gemItem.public_id);
+        await loadInventory();
+        showSocketResultModal(targetItem, data);
+        return true;
+    } catch (error) {
+        handleError(error, 'Engaste rejeitado pelo servidor.');
+        revertItem(gemItem.public_id);
+        return false;
+    } finally {
+        actionInFlight = false;
+        clearActiveDrag();
     }
 }
 
@@ -2532,13 +4037,22 @@ async function loadInventory() {
         ]);
         const containers = response.data?.containers || [];
         const equipment = response.data?.equipment || [];
-        const characterStats = response.data?.character_stats || [];
         const equipmentLinks = response.data?.equipment_links || [];
         const activeSetBonuses = response.data?.active_set_bonuses || [];
-        const visibleContainers = containers.filter(isContainerVisible);
-        const summaryByPublicId = new Map(
+        currentEquipment = equipment;
+        currentEquipmentLinks = equipmentLinks;
+        currentSetBonuses = activeSetBonuses;
+        equippedBackpackPublicId = equipment.find((slot) => slot.code === 'backpack' && slot.item)?.item?.public_id || null;
+        if (equippedBackpackPublicId) {
+            expeditionCarryOpen = true;
+        }
+        const characterStats = response.data?.character_stats || [];
+        playerPower = response.data?.player_power || null;
+        inventorySummaryByPublicId = new Map(
             (summaryResponse?.data?.containers || []).map((entry) => [entry.public_id, entry])
         );
+        const visibleContainers = containers.filter(isContainerVisible);
+        const summaryByPublicId = inventorySummaryByPublicId;
 
         destroyGrids();
         containerRoot.textContent = '';
@@ -2552,16 +4066,53 @@ async function loadInventory() {
             return;
         }
 
-        for (const container of visibleContainers) {
-            containerIndex.set(container.public_id, container);
-            const section = renderContainer(container, summaryByPublicId.get(container.public_id) || null);
-            containerRoot.appendChild(section);
-            const gridNode = section.querySelector('.inventory-grid');
-            const grid = initializeGrid(container, gridNode);
-            addItems(container, grid);
+        const splitParent = splitViewState?.parentPublicId
+            ? containers.find((container) => container.public_id === splitViewState.parentPublicId)
+            : null;
+        const splitChild = splitViewState?.childPublicId
+            ? containers.find((container) => container.public_id === splitViewState.childPublicId)
+            : null;
+
+        if (splitParent && splitChild && isContainerVisible(splitChild)) {
+            for (const container of containers) {
+                containerIndex.set(container.public_id, container);
+            }
+
+            const splitSection = renderSplitLayout(splitParent, splitChild, summaryByPublicId);
+            containerRoot.appendChild(splitSection);
+
+            for (const container of [splitParent, splitChild]) {
+                const section = splitSection.querySelector(`[data-container-public-id="${container.public_id}"]`);
+                const gridNode = section?.querySelector('.inventory-grid');
+                if (!gridNode) continue;
+                const grid = initializeGrid(container, gridNode);
+                addItems(container, grid);
+            }
+        } else {
+            if (splitViewState) {
+                clearSplitView();
+            }
+
+            for (const container of visibleContainers) {
+                containerIndex.set(container.public_id, container);
+                const section = renderContainer(container, summaryByPublicId.get(container.public_id) || null);
+                containerRoot.appendChild(section);
+                const gridNode = section.querySelector('.inventory-grid');
+                const grid = initializeGrid(container, gridNode);
+                addItems(container, grid);
+            }
         }
 
         bindContainerLinks();
+        if (comparePanelState?.item?.public_id) {
+            const refreshed = itemIndex.get(comparePanelState.item.public_id)?.item;
+            if (refreshed) {
+                comparePanelState.item = refreshed;
+                renderComparePanel();
+            } else {
+                closeComparePanel();
+            }
+        }
         setStatus('Sincronizado');
     } catch (error) {
         handleError(error, 'Nao foi possivel carregar o inventario.');
@@ -2598,6 +4149,15 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'i' || event.key === 'I') {
         event.preventDefault();
         toggleCharacterPanel();
+    }
+    if (event.key === 'e' || event.key === 'E') {
+        event.preventDefault();
+        toggleExpeditionPanel();
+    }
+    if (['1', '2', '3', '4'].includes(event.key)) {
+        const slotCode = `potion_${event.key}`;
+        event.preventDefault();
+        useEquippedPotionHotkey(slotCode);
     }
 });
 

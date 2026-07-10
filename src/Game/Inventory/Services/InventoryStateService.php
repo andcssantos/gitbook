@@ -2,7 +2,11 @@
 
 namespace App\Game\Inventory\Services;
 
+use App\Game\Containers\Services\ContainerAcceptanceSummaryService;
+use App\Game\Containers\Services\ContainerNestingService;
+use App\Game\Equipment\Services\ExpeditionCarryCapacityService;
 use App\Game\Inventory\InventoryException;
+use App\Game\Items\Services\ItemPowerService;
 use App\Support\DB;
 use PDO;
 
@@ -14,6 +18,8 @@ class InventoryStateService
 
     public function forPlayer(int $playerId): array
     {
+        (new ExpeditionCarryCapacityService($this->pdo()))->ensureBaselineForPlayer($playerId);
+
         $containers = $this->containers($playerId);
         $items = $this->items($playerId);
 
@@ -26,14 +32,26 @@ class InventoryStateService
             $containers[$containerId]['items'][] = $this->mapItem($item);
         }
 
+        $acceptanceSummary = new ContainerAcceptanceSummaryService(null, $this->pdo());
+        $nesting = new ContainerNestingService($this->pdo());
+        foreach ($containers as $containerId => $container) {
+            $containers[$containerId]['acceptance_summary'] = $acceptanceSummary->forContainer($container);
+            $containers[$containerId]['nesting_depth'] = $nesting->nestingDepth($container);
+            $containers[$containerId]['parent_chain'] = $nesting->parentChain($container, $playerId);
+        }
+
+        $equipment = $this->equipment($playerId);
+        $characterStats = $this->characterStats($playerId);
+
         return [
             'containers' => array_values(array_map(function (array $container): array {
                 unset($container['internal_id']);
 
                 return $container;
             }, $containers)),
-            'equipment' => $this->equipment($playerId),
-            'character_stats' => $this->characterStats($playerId),
+            'equipment' => $equipment,
+            'character_stats' => $characterStats,
+            'player_power' => (new ItemPowerService())->forEquippedPlayer($equipment, $characterStats),
             'equipment_links' => $this->equipmentLinks($playerId),
             'active_set_bonuses' => $this->activeSetBonuses($playerId),
         ];
@@ -187,7 +205,14 @@ class InventoryStateService
         $stmt = $this->pdo()->prepare('SELECT
                 cinst.public_id,
                 cinst.name,
-                cd.code AS definition_code
+                cinst.grid_columns,
+                cinst.grid_rows,
+                cd.code AS definition_code,
+                (
+                    SELECT COUNT(*)
+                    FROM container_items ci
+                    WHERE ci.container_instance_id = cinst.id
+                ) AS item_count
             FROM container_instances cinst
             INNER JOIN container_definitions cd ON cd.id = cinst.container_definition_id
             INNER JOIN item_instances ii ON ii.id = cinst.source_item_instance_id
@@ -211,6 +236,12 @@ class InventoryStateService
             'public_id' => (string) $row['public_id'],
             'definition_code' => (string) $row['definition_code'],
             'name' => (string) $row['name'],
+            'grid' => [
+                'columns' => (int) $row['grid_columns'],
+                'rows' => (int) $row['grid_rows'],
+            ],
+            'item_count' => (int) ($row['item_count'] ?? 0),
+            'capacity_cells' => max(1, (int) $row['grid_columns']) * max(1, (int) $row['grid_rows']),
         ];
     }
 
@@ -293,12 +324,21 @@ class InventoryStateService
                 id.equip_slot_code,
                 id.is_container,
                 id.tradeable,
+                ic.code AS category_code,
                 linked.public_id AS linked_container_public_id,
                 linked_cd.code AS linked_container_definition_code,
-                linked.name AS linked_container_name
+                linked.name AS linked_container_name,
+                linked.grid_columns AS linked_container_grid_columns,
+                linked.grid_rows AS linked_container_grid_rows,
+                (
+                    SELECT COUNT(*)
+                    FROM container_items linked_ci
+                    WHERE linked_ci.container_instance_id = linked.id
+                ) AS linked_container_item_count
             FROM container_items ci
             INNER JOIN item_instances ii ON ii.id = ci.item_instance_id
             INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+            INNER JOIN item_categories ic ON ic.id = id.category_id
             INNER JOIN container_instances cinst ON cinst.id = ci.container_instance_id
             LEFT JOIN player_equipment pe ON pe.item_instance_id = ii.id AND pe.player_id = :equipment_player_id
             LEFT JOIN container_instances linked ON linked.source_item_instance_id = ii.id AND linked.status = :linked_status
@@ -346,13 +386,23 @@ class InventoryStateService
                 id.equip_slot_code,
                 id.is_container,
                 id.tradeable,
+                id.base_config,
+                ic.code AS category_code,
                 linked.public_id AS linked_container_public_id,
                 linked_cd.code AS linked_container_definition_code,
-                linked.name AS linked_container_name
+                linked.name AS linked_container_name,
+                linked.grid_columns AS linked_container_grid_columns,
+                linked.grid_rows AS linked_container_grid_rows,
+                (
+                    SELECT COUNT(*)
+                    FROM container_items linked_ci
+                    WHERE linked_ci.container_instance_id = linked.id
+                ) AS linked_container_item_count
             FROM equipment_slots es
             LEFT JOIN player_equipment pe ON pe.equipment_slot_id = es.id AND pe.player_id = :player_id
             LEFT JOIN item_instances ii ON ii.id = pe.item_instance_id AND ii.owner_player_id = :item_owner_player_id
             LEFT JOIN item_definitions id ON id.id = ii.item_definition_id
+            LEFT JOIN item_categories ic ON ic.id = id.category_id
             LEFT JOIN container_instances linked ON linked.source_item_instance_id = ii.id AND linked.status = :linked_status
             LEFT JOIN container_definitions linked_cd ON linked_cd.id = linked.container_definition_id
             WHERE es.status = :status
@@ -595,6 +645,7 @@ class InventoryStateService
                 'equip_slot_code' => $row['equip_slot_code'] !== null ? (string) $row['equip_slot_code'] : null,
                 'is_container' => (bool) $row['is_container'],
                 'tradeable' => (bool) $row['tradeable'],
+                'category_code' => $row['category_code'] !== null ? (string) $row['category_code'] : null,
             ],
             'quantity' => (int) $row['quantity'],
             'quality_value' => $row['quality_value'] !== null ? (float) $row['quality_value'] : null,
@@ -621,12 +672,10 @@ class InventoryStateService
         ];
 
         if (!empty($row['linked_container_public_id'])) {
-            $mapped['linked_container'] = [
-                'public_id' => (string) $row['linked_container_public_id'],
-                'definition_code' => (string) ($row['linked_container_definition_code'] ?? ''),
-                'name' => (string) ($row['linked_container_name'] ?? ''),
-            ];
+            $mapped['linked_container'] = $this->mapLinkedContainerRow($row);
         }
+
+        $mapped['power'] = (new ItemPowerService())->forItem($mapped);
 
         return $mapped;
     }
@@ -646,6 +695,8 @@ class InventoryStateService
                 'equip_slot_code' => $row['equip_slot_code'] !== null ? (string) $row['equip_slot_code'] : null,
                 'is_container' => (bool) $row['is_container'],
                 'tradeable' => (bool) $row['tradeable'],
+                'base_config' => $this->parseBaseConfig($row['base_config'] ?? null),
+                'category_code' => $row['category_code'] !== null ? (string) $row['category_code'] : null,
             ],
             'quantity' => (int) $row['quantity'],
             'quality_value' => $row['quality_value'] !== null ? (float) $row['quality_value'] : null,
@@ -664,14 +715,30 @@ class InventoryStateService
         ];
 
         if (!empty($row['linked_container_public_id'])) {
-            $mapped['linked_container'] = [
-                'public_id' => (string) $row['linked_container_public_id'],
-                'definition_code' => (string) ($row['linked_container_definition_code'] ?? ''),
-                'name' => (string) ($row['linked_container_name'] ?? ''),
-            ];
+            $mapped['linked_container'] = $this->mapLinkedContainerRow($row);
         }
 
+        $mapped['power'] = (new ItemPowerService())->forItem($mapped);
+
         return $mapped;
+    }
+
+    private function mapLinkedContainerRow(array $row): array
+    {
+        $columns = max(1, (int) ($row['linked_container_grid_columns'] ?? 1));
+        $rows = max(1, (int) ($row['linked_container_grid_rows'] ?? 1));
+
+        return [
+            'public_id' => (string) $row['linked_container_public_id'],
+            'definition_code' => (string) ($row['linked_container_definition_code'] ?? ''),
+            'name' => (string) ($row['linked_container_name'] ?? ''),
+            'grid' => [
+                'columns' => $columns,
+                'rows' => $rows,
+            ],
+            'item_count' => (int) ($row['linked_container_item_count'] ?? 0),
+            'capacity_cells' => $columns * $rows,
+        ];
     }
 
     private function propertiesForItem(int $itemInstanceId): array
@@ -786,6 +853,17 @@ class InventoryStateService
         }
 
         return $this->pdo()->query('SHOW TABLES LIKE ' . $this->pdo()->quote($table))->fetchColumn() !== false;
+    }
+
+    private function parseBaseConfig(mixed $raw): array
+    {
+        if (!is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     private function pdo(): PDO

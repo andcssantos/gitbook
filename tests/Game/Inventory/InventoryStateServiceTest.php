@@ -36,7 +36,7 @@ class InventoryStateServiceTest extends TestCase
         $this->assertCount(4, $state['containers']);
         $main = $this->containerByCode($state, 'main_inventory_level_1');
 
-        $this->assertSame(['columns' => 8, 'rows' => 5], $main['grid']);
+        $this->assertSame(['columns' => 12, 'rows' => 5], $main['grid']);
         $this->assertCount(4, $main['items']);
         $this->assertSame('stone_pickaxe', $main['items'][0]['definition']['code']);
         $this->assertArrayHasKey('placement', $main['items'][0]);
@@ -50,6 +50,7 @@ class InventoryStateServiceTest extends TestCase
 
         $this->assertSame([], $this->containerByCode($state, 'market_delivery')['items']);
         $this->assertSame([], $this->containerByCode($state, 'expedition_carry')['items']);
+        $this->assertSame(['columns' => 2, 'rows' => 2], $this->containerByCode($state, 'expedition_carry')['grid']);
     }
 
     public function testStateReflectsServerAuthoritativeMove(): void

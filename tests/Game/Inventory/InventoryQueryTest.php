@@ -38,7 +38,7 @@ class InventoryQueryTest extends TestCase
         $main = $this->summaryContainerByCode($summary, 'main_inventory_level_1');
         $this->assertSame(4, $main['item_count']);
         $this->assertGreaterThan(0, $main['occupied_cells']);
-        $this->assertSame(40, $main['capacity_cells']);
+        $this->assertSame(60, $main['capacity_cells']);
     }
 
     public function testShowContainerReturnsSingleContainerSnapshot(): void

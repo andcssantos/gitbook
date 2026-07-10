@@ -99,11 +99,11 @@ return function (PDO $pdo): void {
     }
 
     foreach ([
-        'main_inventory_level_1' => ['Main Inventory Level 1', 'MAIN_INVENTORY', 8, 5, 0],
+        'main_inventory_level_1' => ['Main Inventory Level 1', 'MAIN_INVENTORY', 12, 5, 0],
         'small_backpack' => ['Small Backpack', 'BACKPACK', 4, 4, 0],
         'medium_backpack' => ['Medium Backpack', 'BACKPACK', 6, 5, 0],
-        'wooden_chest' => ['Wooden Chest', 'CHEST', 10, 8, 0],
-        'expedition_carry' => ['Expedition Carry', 'EXPEDITION_CARRY', 8, 5, 0],
+        'wooden_chest' => ['Wooden Chest', 'CHEST', 10, 8, 1],
+        'expedition_carry' => ['Expedition Carry', 'EXPEDITION_CARRY', 2, 2, 0],
         'market_escrow' => ['Market Escrow', 'MARKET_ESCROW', 10, 10, 0],
         'market_delivery' => ['Market Delivery', 'MARKET_DELIVERY', 10, 10, 0],
     ] as $code => [$name, $type, $columns, $rows, $allowContainerItems]) {
@@ -150,10 +150,12 @@ return function (PDO $pdo): void {
         ]);
     };
 
-    foreach (['small_backpack', 'medium_backpack', 'wooden_chest', 'market_delivery', 'market_escrow'] as $containerCode) {
+    foreach (['small_backpack', 'medium_backpack', 'market_delivery', 'market_escrow'] as $containerCode) {
         $upsertAcceptanceRule($containerCode, 'CONTAINER_BLOCK', '', false, 10);
         $upsertAcceptanceRule($containerCode, 'ACCEPT_ALL', '', true, 100);
     }
+
+    $upsertAcceptanceRule('wooden_chest', 'ACCEPT_ALL', '', true, 100);
 
     $upsertAcceptanceRule('main_inventory_level_1', 'ACCEPT_ALL', '', true, 100);
 

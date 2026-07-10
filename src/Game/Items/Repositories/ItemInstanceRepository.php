@@ -107,6 +107,33 @@ class ItemInstanceRepository
         return is_array($row) ? $row : null;
     }
 
+    public function findById(int $itemInstanceId, bool $lock = false): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT
+                ii.*,
+                id.code AS definition_code,
+                id.grid_w AS definition_grid_w,
+                id.grid_h AS definition_grid_h,
+                id.is_container,
+                id.stackable,
+                id.max_stack,
+                id.equip_slot_code,
+                id.base_config,
+                ic.code AS category_code,
+                mf.code AS material_family_code
+            FROM item_instances ii
+            INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+            INNER JOIN item_categories ic ON ic.id = id.category_id
+            LEFT JOIN material_families mf ON mf.id = id.material_family_id
+            WHERE ii.id = :id
+            LIMIT 1' . $this->lockClause($lock));
+        $stmt->execute(['id' => $itemInstanceId]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
     public function updateStack(int $itemInstanceId, int $quantity, ?float $qualityValue): void
     {
         $stmt = $this->pdo()->prepare('UPDATE item_instances
@@ -125,6 +152,53 @@ class ItemInstanceRepository
     {
         $stmt = $this->pdo()->prepare('DELETE FROM item_instances WHERE id = :id');
         $stmt->execute(['id' => $itemInstanceId]);
+    }
+
+    public function updateState(int $itemInstanceId, string $state): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instances SET state = :state WHERE id = :id');
+        $stmt->execute([
+            'id' => $itemInstanceId,
+            'state' => $state,
+        ]);
+    }
+
+    public function updateQualityBucket(int $itemInstanceId, string $qualityBucket): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instances
+            SET quality_bucket = :quality_bucket,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id');
+        $stmt->execute([
+            'id' => $itemInstanceId,
+            'quality_bucket' => $qualityBucket,
+        ]);
+    }
+
+    public function updateQuality(int $itemInstanceId, string $qualityBucket, float $qualityValue): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instances
+            SET quality_bucket = :quality_bucket,
+                quality_value = :quality_value,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id');
+        $stmt->execute([
+            'id' => $itemInstanceId,
+            'quality_bucket' => $qualityBucket,
+            'quality_value' => $qualityValue,
+        ]);
+    }
+
+    public function updateItemName(int $itemInstanceId, ?string $itemName): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instances
+            SET item_name = :item_name,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id');
+        $stmt->execute([
+            'id' => $itemInstanceId,
+            'item_name' => $itemName,
+        ]);
     }
 
     public function listPlacedForPlayer(int $playerId, bool $lock = false): array

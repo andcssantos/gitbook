@@ -46,7 +46,7 @@ class InventoryPlacementValidationTest extends TestCase
     public function testOutOfBoundsMoveIsRejected(): void
     {
         $this->assertInventoryException(
-            fn (): array => $this->move('stone_pickaxe', 'main_inventory_level_1', 'main_inventory_level_1', 7, 3, 1),
+            fn (): array => $this->move('stone_pickaxe', 'main_inventory_level_1', 'main_inventory_level_1', 11, 0, 1),
             'INVENTORY_OUT_OF_BOUNDS'
         );
     }
@@ -73,6 +73,50 @@ class InventoryPlacementValidationTest extends TestCase
         $this->assertInventoryException(
             fn (): array => $this->move('small_leather_backpack', 'main_inventory_level_1', 'small_backpack', 0, 0, 1),
             'INVENTORY_CONTAINER_ITEM_BLOCKED'
+        );
+    }
+
+    public function testBackpackCanBePlacedInsideWoodenChest(): void
+    {
+        $chestPublicId = $this->createWoodenChestItem('wooden-chest-public', 0, 4);
+        $result = $this->moveByPublicId(
+            $this->itemPublicId('small_leather_backpack'),
+            'main_inventory_level_1',
+            $chestPublicId,
+            0,
+            0,
+            1
+        );
+
+        $this->assertSame($chestPublicId, $result['target_container_public_id']);
+    }
+
+    public function testContainerNestingLimitBlocksThirdLevelContainer(): void
+    {
+        $chestOnePublicId = $this->createWoodenChestItem('wooden-chest-public-2', 0, 4);
+        $chestTwoPublicId = $this->createWoodenChestItem('wooden-chest-public-3', 4, 4);
+        $this->moveByPublicId(
+            'wooden-chest-public-3',
+            'main_inventory_level_1',
+            $chestOnePublicId,
+            0,
+            0,
+            1
+        );
+
+        $chestTwoLinkedPublicId = $this->linkedContainerPublicIdForItem('wooden-chest-public-3');
+        $this->createWoodenChestItem('wooden-chest-public-4', 8, 0);
+
+        $this->assertInventoryException(
+            fn (): array => $this->moveByPublicId(
+                'wooden-chest-public-4',
+                'main_inventory_level_1',
+                $chestTwoLinkedPublicId,
+                0,
+                0,
+                1
+            ),
+            'INVENTORY_CONTAINER_NESTING_LIMIT'
         );
     }
 
@@ -142,6 +186,16 @@ class InventoryPlacementValidationTest extends TestCase
         $this->assertSame($targetContainerId, $actualContainerId);
     }
 
+    public function testMarketDeliveryAllowsRearrangingItemsInsideContainer(): void
+    {
+        $this->move('wood', 'main_inventory_level_1', 'market_delivery', 0, 0, 1);
+
+        $result = $this->move('wood', 'market_delivery', 'market_delivery', 2, 0, 2);
+
+        $this->assertSame(2, $result['grid_x']);
+        $this->assertSame(0, $result['grid_y']);
+    }
+
     public function testMarketDeliveryRejectsDepositsOutsideMainInventory(): void
     {
         $this->createPlacedItem('wood', 'wood-in-backpack', 'small_backpack', 0, 0, 1, 1);
@@ -194,18 +248,93 @@ class InventoryPlacementValidationTest extends TestCase
         return $this->moveByPublicId($this->itemPublicId($itemCode), $sourceCode, $targetCode, $x, $y, $version, $rotated);
     }
 
-    private function moveByPublicId(string $itemPublicId, string $sourceCode, string $targetCode, int $x, int $y, int $version, bool $rotated = false): array
+    private function moveByPublicId(string $itemPublicId, string $sourceReference, string $targetReference, int $x, int $y, int $version, bool $rotated = false): array
     {
         return (new InventoryMoveService($this->pdo))->move(new MoveItemRequest(
             1,
             $itemPublicId,
-            $this->containerPublicId($sourceCode),
-            $this->containerPublicId($targetCode),
+            $this->resolveContainerPublicId($sourceReference),
+            $this->resolveContainerPublicId($targetReference),
             $x,
             $y,
             $rotated,
             $version
         ));
+    }
+
+    private function resolveContainerPublicId(string $reference): string
+    {
+        $stmt = $this->pdo->prepare('SELECT ci.public_id FROM container_instances ci INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id WHERE cd.code = :code AND ci.owner_player_id = 1 LIMIT 1');
+        $stmt->execute(['code' => $reference]);
+        $byCode = $stmt->fetchColumn();
+        if ($byCode !== false) {
+            return (string) $byCode;
+        }
+
+        $stmt = $this->pdo->prepare('SELECT public_id FROM container_instances WHERE public_id = :public_id AND owner_player_id = 1 LIMIT 1');
+        $stmt->execute(['public_id' => $reference]);
+        $byPublicId = $stmt->fetchColumn();
+        if ($byPublicId !== false) {
+            return (string) $byPublicId;
+        }
+
+        $this->fail("Container {$reference} not found.");
+    }
+
+    private function createWoodenChestItem(string $publicId, int $x, int $y): string
+    {
+        $definitionCode = 'wooden_storage_chest_' . str_replace('-', '_', $publicId);
+        $categoryId = (int) $this->pdo->query("SELECT id FROM item_categories WHERE code = 'container' LIMIT 1")->fetchColumn();
+        $familyId = (int) $this->pdo->query("SELECT id FROM material_families WHERE code = 'wood' LIMIT 1")->fetchColumn();
+        $stmt = $this->pdo->prepare('INSERT INTO item_definitions (
+            code, name, description, category_id, material_family_id, stackable, max_stack, grid_w, grid_h, equip_slot_code, is_container, tradeable, base_config, status
+        ) VALUES (
+            :code, :name, :description, :category_id, :material_family_id, 0, 1, 2, 2, NULL, 1, 1, :base_config, :status
+        )');
+        $stmt->execute([
+            'code' => $definitionCode,
+            'name' => 'Wooden Storage Chest',
+            'description' => 'Chest for nested container tests.',
+            'category_id' => $categoryId,
+            'material_family_id' => $familyId,
+            'base_config' => json_encode(['container_definition' => 'wooden_chest'], JSON_THROW_ON_ERROR),
+            'status' => 'active',
+        ]);
+        $definitionId = (int) $this->pdo->lastInsertId();
+        $mainContainerId = (int) $this->pdo->query("SELECT ci.id FROM container_instances ci INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id WHERE cd.code = 'main_inventory_level_1' AND ci.owner_player_id = 1 LIMIT 1")->fetchColumn();
+
+        $stmt = $this->pdo->prepare('INSERT INTO item_instances (public_id, item_definition_id, owner_player_id, quantity, state) VALUES (:public_id, :item_definition_id, :owner_player_id, :quantity, :state)');
+        $stmt->execute([
+            'public_id' => $publicId,
+            'item_definition_id' => $definitionId,
+            'owner_player_id' => 1,
+            'quantity' => 1,
+            'state' => 'available',
+        ]);
+        $itemId = (int) $this->pdo->lastInsertId();
+
+        $stmt = $this->pdo->prepare('INSERT INTO container_items (container_instance_id, item_instance_id, grid_x, grid_y, grid_w, grid_h) VALUES (:container_instance_id, :item_instance_id, :grid_x, :grid_y, :grid_w, :grid_h)');
+        $stmt->execute([
+            'container_instance_id' => $mainContainerId,
+            'item_instance_id' => $itemId,
+            'grid_x' => $x,
+            'grid_y' => $y,
+            'grid_w' => 2,
+            'grid_h' => 2,
+        ]);
+
+        $chestDefinitionId = (int) $this->pdo->query("SELECT id FROM container_definitions WHERE code = 'wooden_chest' LIMIT 1")->fetchColumn();
+        $stmt = $this->pdo->prepare('INSERT INTO container_instances (public_id, container_definition_id, owner_player_id, source_item_instance_id, name, grid_columns, grid_rows, status) VALUES (:public_id, :definition_id, :owner_player_id, :source_item_instance_id, :name, 10, 8, :status)');
+        $stmt->execute([
+            'public_id' => 'linked-' . $publicId,
+            'definition_id' => $chestDefinitionId,
+            'owner_player_id' => 1,
+            'source_item_instance_id' => $itemId,
+            'name' => 'Wooden Chest',
+            'status' => 'active',
+        ]);
+
+        return 'linked-' . $publicId;
     }
 
     private function createPlacedItem(string $itemCode, string $publicId, string $containerCode, int $x, int $y, int $w, int $h): void
@@ -267,6 +396,18 @@ class InventoryPlacementValidationTest extends TestCase
     {
         $stmt = $this->pdo->prepare('SELECT ci.public_id FROM container_instances ci INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id WHERE cd.code = :code AND ci.owner_player_id = 1 LIMIT 1');
         $stmt->execute(['code' => $code]);
+
+        return (string) $stmt->fetchColumn();
+    }
+
+    private function linkedContainerPublicIdForItem(string $itemPublicId): string
+    {
+        $stmt = $this->pdo->prepare('SELECT cinst.public_id
+            FROM container_instances cinst
+            INNER JOIN item_instances ii ON ii.id = cinst.source_item_instance_id
+            WHERE ii.public_id = :public_id
+            LIMIT 1');
+        $stmt->execute(['public_id' => $itemPublicId]);
 
         return (string) $stmt->fetchColumn();
     }

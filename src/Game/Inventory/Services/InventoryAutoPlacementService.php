@@ -84,10 +84,11 @@ class InventoryAutoPlacementService
 
     public function autoPlaceExistingItem(int $playerId, array $item): array
     {
-        $this->linkService()->ensureForItem($playerId, $item);
+        $containers = new ContainerRepository($this->pdo());
+        $containers->deletePlacementByItemId((int) $item['id']);
 
         $items = new ItemInstanceRepository($this->pdo());
-        $containers = new ContainerRepository($this->pdo());
+        $this->linkService()->ensureForItem($playerId, $item);
         $compatibility = new StackCompatibilityService();
         $mergeResults = [];
         $remainingQuantity = (int) $item['quantity'];

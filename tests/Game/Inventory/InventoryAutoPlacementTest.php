@@ -122,7 +122,7 @@ class InventoryAutoPlacementTest extends TestCase
             'INVENTORY_FULL'
         );
 
-        $this->assertSame(40, $this->countItemsByDefinition('stone'));
+        $this->assertSame(60, $this->countItemsByDefinition('stone'));
     }
 
     public function testLargeItemUsesDeterministicFreeSpaceScan(): void
@@ -254,7 +254,7 @@ class InventoryAutoPlacementTest extends TestCase
         $definition = $this->fetchByCode('item_definitions', 'stone');
 
         for ($y = 0; $y < 5; $y++) {
-            for ($x = 0; $x < 8; $x++) {
+            for ($x = 0; $x < 12; $x++) {
                 $stmt = $this->pdo->prepare('INSERT INTO item_instances (public_id, item_definition_id, owner_player_id, quantity, quality_value, quality_bucket, bind_type, state) VALUES (:public_id, :item_definition_id, :owner_player_id, :quantity, :quality_value, :quality_bucket, :bind_type, :state)');
                 $stmt->execute([
                     'public_id' => "filler-{$x}-{$y}",

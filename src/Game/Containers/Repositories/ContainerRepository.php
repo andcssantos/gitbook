@@ -47,6 +47,11 @@ class ContainerRepository
         return $this->instances->findByPublicId($publicId);
     }
 
+    public function findInstanceById(int $id, bool $lock = false): ?array
+    {
+        return $this->instances->findById($id, $lock);
+    }
+
     public function createInstanceFromDefinition(array $definition, int $playerId, array $overrides = []): int
     {
         return $this->instances->create(array_merge([

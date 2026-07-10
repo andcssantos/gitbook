@@ -3,13 +3,17 @@
 namespace App\Game\Inventory\Services;
 
 use App\Game\Containers\Services\ContainerAcceptanceService;
+use App\Game\Containers\Services\ContainerNestingService;
 use App\Game\Inventory\InventoryException;
 
 class InventoryPlacementValidator
 {
-    public function __construct(private ?ContainerAcceptanceService $acceptance = null)
-    {
+    public function __construct(
+        private ?ContainerAcceptanceService $acceptance = null,
+        private ?ContainerNestingService $nesting = null
+    ) {
         $this->acceptance ??= new ContainerAcceptanceService();
+        $this->nesting ??= new ContainerNestingService();
     }
 
     public function validateMove(
@@ -43,6 +47,13 @@ class InventoryPlacementValidator
                 ? 'Itens-container nao podem ser colocados dentro deste container.'
                 : 'Este container nao aceita o item selecionado.';
             throw new InventoryException($rejectionCode, $message);
+        }
+
+        if (!$this->nesting->canPlaceContainerItem($targetContainer, $item)) {
+            throw new InventoryException(
+                'INVENTORY_CONTAINER_NESTING_LIMIT',
+                'Este container atingiu o limite de aninhamento (max 2 niveis).'
+            );
         }
 
         [$width, $height] = $this->dimensions($item, $rotated);
@@ -90,6 +101,13 @@ class InventoryPlacementValidator
                 ? 'Itens-container nao podem ser colocados dentro deste container.'
                 : 'Este container nao aceita o item selecionado.';
             throw new InventoryException($rejectionCode, $message);
+        }
+
+        if (!$this->nesting->canPlaceContainerItem($targetContainer, $item)) {
+            throw new InventoryException(
+                'INVENTORY_CONTAINER_NESTING_LIMIT',
+                'Este container atingiu o limite de aninhamento (max 2 niveis).'
+            );
         }
 
         [$width, $height] = $this->dimensions($item, $rotated);

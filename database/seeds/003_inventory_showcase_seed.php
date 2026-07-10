@@ -98,12 +98,39 @@ return function (PDO $pdo): void {
         ['showcase_storm_staff', 'Cajado da Tempestade', 'Cajado epico para testar item alto.', 'weapon', 'wood', 0, 1, 1, 3, 'weapon', 0, 'epic', 86.0, 2, 3, '00000000-0000-4003-8000-000000000007'],
         ['showcase_drake_helm', 'Elmo do Draco', 'Elmo lendario com metal escurecido.', 'armor', 'metal', 0, 1, 2, 2, 'helmet', 0, 'legendary', 92.0, 4, 3, '00000000-0000-4003-8000-000000000008'],
         ['showcase_sunblade', 'Lamina Solar', 'Arma lendaria para testar brilho laranja.', 'weapon', 'metal', 0, 1, 1, 3, 'weapon', 0, 'legendary', 95.0, 6, 3, '00000000-0000-4003-8000-000000000009'],
-        ['showcase_oracle_amulet', 'Amuleto do Oraculo', 'Artefato unico com energia instavel.', 'armor', 'essence', 0, 1, 1, 1, 'amulet', 0, 'unique', 99.0, 8, 3, '00000000-0000-4003-8000-000000000010'],
+        ['showcase_oracle_amulet', 'Amuleto do Oraculo', 'Artefato unico com energia instavel.', 'armor', 'essence', 0, 1, 1, 1, 'amulet', 0, 'divine', 99.0, 8, 3, '00000000-0000-4003-8000-000000000010'],
         ['showcase_dragon_egg', 'Ovo de Dragao', 'Relicario unico usado para testar item grande.', 'material', 'essence', 0, 1, 2, 2, null, 0, 'unique', 100.0, 0, 6, '00000000-0000-4003-8000-000000000011'],
         ['showcase_gold_pouch', 'Bolsa de Moedas', 'Pacote de moeda visual para testes.', 'currency', 'currency_metal', 1, 999, 1, 1, null, 0, 'magic', 60.0, 3, 6, '00000000-0000-4003-8000-000000000012'],
         ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 0, 8, '00000000-0000-4003-8000-000000000013'],
+        ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 3, 8, '00000000-0000-4003-8000-000000000019'],
+        ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 4, 8, '00000000-0000-4003-8000-00000000001a'],
+        ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 5, 8, '00000000-0000-4003-8000-00000000001b'],
+        ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 6, 8, '00000000-0000-4003-8000-00000000001c'],
         ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 1, 8, '00000000-0000-4003-8000-000000000014'],
-        ['jewel_chaos_minor', 'Joia do Caos Menor', 'Catalisador instavel para melhorias futuras.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'epic', 84.0, 2, 8, '00000000-0000-4003-8000-000000000015'],
+        ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 0, 9, '00000000-0000-4003-8000-00000000001d'],
+        ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 1, 9, '00000000-0000-4003-8000-00000000001e'],
+        ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 2, 9, '00000000-0000-4003-8000-00000000001f'],
+        ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 3, 9, '00000000-0000-4003-8000-000000000020'],
+        ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 4, 9, '00000000-0000-4003-8000-000000000021'],
+        ['jewel_chaos_minor', 'Joia do Caos Menor', 'Transforma a raridade de equipamentos comuns em resultados instaveis.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'epic', 84.0, 2, 8, '00000000-0000-4003-8000-000000000015'],
+        ['jewel_chaos_minor', 'Joia do Caos Menor', 'Transforma a raridade de equipamentos comuns em resultados instaveis.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'epic', 84.0, 7, 8, '00000000-0000-4003-8000-000000000022'],
+        ['jewel_chaos_minor', 'Joia do Caos Menor', 'Transforma a raridade de equipamentos comuns em resultados instaveis.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'epic', 84.0, 8, 8, '00000000-0000-4003-8000-000000000023'],
+        ['jewel_chaos_minor', 'Joia do Caos Menor', 'Transforma a raridade de equipamentos comuns em resultados instaveis.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'epic', 84.0, 9, 8, '00000000-0000-4003-8000-000000000024'],
+        ['jewel_chaos_minor', 'Joia do Caos Menor', 'Transforma a raridade de equipamentos comuns em resultados instaveis.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'epic', 84.0, 0, 10, '00000000-0000-4003-8000-000000000025'],
+        ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 1, 10, '00000000-0000-4003-8000-000000000026'],
+        ['jewel_blessing_minor', 'Joia da Bencao Menor', 'Tenta melhorar um item em +1 com alta chance de sucesso.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 62.0, 2, 10, '00000000-0000-4003-8000-000000000027'],
+        ['jewel_soul_minor', 'Joia da Alma Menor', 'Tenta melhorar atributos do item, com risco moderado de falha.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 72.0, 3, 10, '00000000-0000-4003-8000-000000000028'],
+        ['gem_ruby_attack', 'Rubi Marcial', 'Gema de engaste que favorece poder de ataque.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 75.0, 4, 10, '00000000-0000-4003-8000-000000000029'],
+        ['gem_emerald_vitality', 'Esmeralda Vital', 'Gema de engaste que favorece vida maxima.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 76.0, 5, 10, '00000000-0000-4003-8000-00000000002a'],
+        ['showcase_common_wings', 'Asas de Linho', 'Asas simples para testes de equipamento comum.', 'armor', 'leather', 0, 1, 2, 2, 'wings', 0, 'common', 42.0, 0, 11, '00000000-0000-4003-8000-00000000002b'],
+        ['showcase_common_gloves', 'Luvas de Couro', 'Luvas comuns para testes de melhoria.', 'armor', 'leather', 0, 1, 1, 1, 'gloves', 0, 'common', 40.0, 1, 11, '00000000-0000-4003-8000-00000000002c'],
+        ['showcase_common_pants', 'Calca de Linho', 'Calca comum para testes de caos e bless.', 'armor', 'leather', 0, 1, 2, 2, 'pants', 0, 'common', 41.0, 2, 11, '00000000-0000-4003-8000-00000000002d'],
+        ['showcase_common_ring', 'Anel de Cobre', 'Anel comum sem atributos para testes.', 'armor', 'metal', 0, 1, 1, 1, 'ring', 0, 'common', 39.0, 3, 11, '00000000-0000-4003-8000-00000000002e'],
+        ['showcase_common_earring', 'Brinco de Cobre', 'Brinco comum para testes de acessorio pequeno.', 'armor', 'metal', 0, 1, 1, 1, 'earring', 0, 'common', 39.0, 4, 11, '00000000-0000-4003-8000-00000000002f'],
+        ['showcase_common_sword', 'Espada de Treino', 'Espada comum de uma mao para testes iniciais.', 'weapon', 'metal', 0, 1, 1, 3, 'weapon', 0, 'common', 44.0, 5, 11, '00000000-0000-4003-8000-000000000030'],
+        ['jewel_reroll_minor', 'Joia de Rerrolagem Menor', 'Substitui um affix aleatorio por outro compativel.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 70.0, 6, 10, '00000000-0000-4003-8000-000000000031'],
+        ['jewel_reroll_minor', 'Joia de Rerrolagem Menor', 'Substitui um affix aleatorio por outro compativel.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 70.0, 7, 10, '00000000-0000-4003-8000-000000000032'],
+        ['jewel_reroll_minor', 'Joia de Rerrolagem Menor', 'Substitui um affix aleatorio por outro compativel.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 70.0, 0, 11, '00000000-0000-4003-8000-000000000033'],
         ['gem_ruby_attack', 'Rubi Marcial', 'Gema de engaste que favorece poder de ataque.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 75.0, 3, 8, '00000000-0000-4003-8000-000000000016'],
         ['gem_emerald_vitality', 'Esmeralda Vital', 'Gema de engaste que favorece vida maxima.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'rare', 76.0, 4, 8, '00000000-0000-4003-8000-000000000017'],
         ['gem_sapphire_guard', 'Safira Guardiã', 'Gema de engaste que favorece armadura.', 'material', 'essence', 0, 1, 1, 1, null, 0, 'magic', 64.0, 5, 8, '00000000-0000-4003-8000-000000000018'],
@@ -156,8 +183,11 @@ return function (PDO $pdo): void {
                     'jewel_blessing_minor' => 85,
                     'jewel_soul_minor' => 62,
                     'jewel_chaos_minor' => 38,
+                    'jewel_reroll_minor' => 55,
                     default => null,
                 },
+                'bless_property_boost' => $code === 'jewel_blessing_minor' ? ['min_percent' => 3, 'max_percent' => 8] : null,
+                'soul_affix_boost' => $code === 'jewel_soul_minor' ? ['min_percent' => 5, 'max_percent' => 15] : null,
                 'gem_effect' => match ($code) {
                     'gem_ruby_attack' => ['property' => 'attack_power', 'value' => 7],
                     'gem_emerald_vitality' => ['property' => 'max_health', 'value' => 22],
@@ -230,7 +260,12 @@ return function (PDO $pdo): void {
             'item_instance_id' => $itemId,
         ]);
 
-        $place = $pdo->prepare('INSERT INTO container_items (
+        $isEquipped = $pdo->prepare('SELECT item_instance_id FROM player_equipment WHERE item_instance_id = :item_instance_id LIMIT 1');
+        $isEquipped->execute(['item_instance_id' => $itemId]);
+        $equipped = $isEquipped->fetchColumn() !== false;
+
+        if (!$equipped) {
+            $place = $pdo->prepare('INSERT INTO container_items (
             container_instance_id,
             item_instance_id,
             grid_x,
@@ -249,14 +284,15 @@ return function (PDO $pdo): void {
             0,
             0
         )');
-        $place->execute([
-            'container_instance_id' => $containerId,
-            'item_instance_id' => $itemId,
-            'grid_x' => $gridX,
-            'grid_y' => $gridY,
-            'grid_w' => $gridW,
-            'grid_h' => $gridH,
-        ]);
+            $place->execute([
+                'container_instance_id' => $containerId,
+                'item_instance_id' => $itemId,
+                'grid_x' => $gridX,
+                'grid_y' => $gridY,
+                'grid_w' => $gridW,
+                'grid_h' => $gridH,
+            ]);
+        }
 
         if ($tableExists('item_instance_properties')) {
             $pdo->prepare('DELETE FROM item_instance_properties WHERE item_instance_id = :item_instance_id')->execute([
@@ -266,12 +302,14 @@ return function (PDO $pdo): void {
             $properties = [];
             if (in_array($category, ['weapon', 'tool'], true)) {
                 $properties[] = ['attack_power', null, (int) round($qualityValue / 4), null, 'base'];
+                $properties[] = ['agility', null, max(1, (int) round($qualityValue / 6)), null, 'base'];
             }
             if ($category === 'armor') {
                 $properties[] = ['armor', null, (int) round($qualityValue / 3), null, 'base'];
+                $properties[] = ['energy', null, max(1, (int) round($qualityValue / 5)), null, 'base'];
             }
-            if (in_array($qualityBucket, ['rare', 'epic', 'legendary', 'unique'], true)) {
-                $properties[] = ['upgrade_level', null, ['rare' => 1, 'epic' => 2, 'legendary' => 3, 'unique' => 4][$qualityBucket], null, 'upgrade'];
+            if (in_array($qualityBucket, ['rare', 'epic', 'legendary', 'unique', 'divine'], true) && in_array($category, ['weapon', 'armor', 'tool'], true)) {
+                $properties[] = ['upgrade_level', null, ['rare' => 1, 'epic' => 2, 'legendary' => 3, 'unique' => 4, 'divine' => 5][$qualityBucket] ?? 1, null, 'upgrade'];
             }
             if (str_starts_with($code, 'jewel_')) {
                 $properties[] = ['upgrade_success_rate', match ($code) {
@@ -303,7 +341,7 @@ return function (PDO $pdo): void {
             }
         }
 
-        if ($tableExists('item_instance_affixes') && in_array($qualityBucket, ['rare', 'epic', 'legendary', 'unique'], true)) {
+        if ($tableExists('item_instance_affixes') && in_array($category, ['weapon', 'armor', 'tool'], true) && !str_starts_with($code, 'jewel_') && !str_starts_with($code, 'gem_') && in_array($qualityBucket, ['rare', 'epic', 'legendary', 'unique', 'divine'], true)) {
             $pdo->prepare('DELETE FROM item_instance_affixes WHERE item_instance_id = :item_instance_id')->execute([
                 'item_instance_id' => $itemId,
             ]);
@@ -333,11 +371,10 @@ return function (PDO $pdo): void {
             ]);
 
             $socketCount = match ($qualityBucket) {
-                'magic' => 1,
-                'rare' => 1,
-                'epic' => 2,
-                'legendary' => 2,
-                'unique' => 3,
+                'uncommon', 'magic' => 1,
+                'rare', 'legendary' => 2,
+                'epic' => 3,
+                'divine', 'unique' => 4,
                 default => 0,
             };
 

@@ -93,7 +93,11 @@ class EquipmentService
                 'item_instance_id' => (int) $item['id'],
             ]);
 
+            $containers = new ContainerRepository($this->pdo());
+            $containers->deletePlacementByItemId((int) $item['id']);
+
             try {
+                $capacity->restoreBackpackContentsAfterUnequip($playerId, $item);
                 $placement = (new InventoryAutoPlacementService($this->pdo()))->autoPlaceExistingItem($playerId, $item);
                 $expeditionCarry = $capacity->resetAfterUnequip($playerId, $item);
             } catch (Throwable $e) {

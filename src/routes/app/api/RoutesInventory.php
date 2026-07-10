@@ -69,3 +69,69 @@ Route::post('/api/inventory/stacks/split', 'App/Api/InventoryController@splitSta
         'audit:inventory.stacks.split',
     ],
 ]);
+
+Route::post('/api/inventory/enhance/preview', 'App/Api/InventoryController@enhancePreview', [
+    'as' => 'api.inventory.enhance.preview',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:120,60',
+        'validate:jewel_item_public_id=required|string|max:64,target_item_public_id=required|string|max:64',
+    ],
+]);
+
+Route::post('/api/inventory/enhance', 'App/Api/InventoryController@enhance', [
+    'as' => 'api.inventory.enhance',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:60,60',
+        'idempotency:api.inventory.enhance',
+        'validate:jewel_item_public_id=required|string|max:64,target_item_public_id=required|string|max:64,expected_jewel_placement_version=required|int|min:1,expected_target_placement_version=required|int|min:1,confirm=nullable|boolean',
+        'audit:inventory.enhance',
+    ],
+]);
+
+Route::post('/api/inventory/socket/preview', 'App/Api/InventoryController@socketPreview', [
+    'as' => 'api.inventory.socket.preview',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:120,60',
+        'validate:gem_item_public_id=required|string|max:64,target_item_public_id=required|string|max:64',
+    ],
+]);
+
+Route::post('/api/inventory/socket', 'App/Api/InventoryController@socket', [
+    'as' => 'api.inventory.socket',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:60,60',
+        'idempotency:api.inventory.socket',
+        'validate:gem_item_public_id=required|string|max:64,target_item_public_id=required|string|max:64,expected_gem_placement_version=required|int|min:1,expected_target_placement_version=required|int|min:1,confirm=nullable|boolean',
+        'audit:inventory.socket',
+    ],
+]);
+
+Route::post('/api/inventory/containers/{containerPublicId:string:64}/organize', 'App/Api/InventoryController@organizeContainer', [
+    'as' => 'api.inventory.containers.organize',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:30,60',
+        'idempotency:api.inventory.containers.organize',
+        'audit:inventory.organize',
+    ],
+]);
+
+Route::patch('/api/inventory/items/{itemPublicId:string:64}/rename', 'App/Api/InventoryController@renameItem', [
+    'as' => 'api.inventory.items.rename',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:60,60',
+        'validate:item_name=nullable|string|max:48',
+        'audit:inventory.rename',
+    ],
+]);
