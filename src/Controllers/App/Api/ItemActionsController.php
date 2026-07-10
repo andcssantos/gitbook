@@ -37,6 +37,7 @@ class ItemActionsController extends Controller
         try {
             $payload = $this->validate(Request::body(), [
                 'confirm' => 'nullable|boolean',
+                'price_premium' => 'nullable|int|min:1',
             ]);
 
             $player = (new PlayerResolver())->requireCurrentPlayer();
@@ -48,7 +49,8 @@ class ItemActionsController extends Controller
                 (int) $player['id'],
                 $itemPublicId,
                 $actionCode,
-                $confirmed
+                $confirmed,
+                is_array($payload) ? $payload : []
             );
 
             $this->success($result, 'Item action executed.');

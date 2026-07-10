@@ -46,6 +46,10 @@ class Middleware
         $params = isset($parts[1]) ? array_map('trim', explode(',', $parts[1])) : [];
 
         if (isset(self::$map[$name])) {
+            if ($name === 'validate' && isset($parts[1])) {
+                return [self::$map[$name], [$parts[1]]];
+            }
+
             return [self::$map[$name], $params];
         }
 

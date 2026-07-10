@@ -187,7 +187,7 @@ class InventoryAutoPlacementTest extends TestCase
             )
         ))->findFirst($item, $container, $placements);
 
-        $this->assertSame(['grid_x' => 2, 'grid_y' => 0, 'grid_w' => 1, 'grid_h' => 1], $slot);
+        $this->assertSame(['grid_x' => 2, 'grid_y' => 0, 'grid_w' => 1, 'grid_h' => 1, 'rotated' => false], $slot);
     }
 
     public function testPartialMergePlacesRemainderWithoutDuplication(): void

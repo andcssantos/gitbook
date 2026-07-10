@@ -168,12 +168,13 @@ Estas decisões **não bloqueiam** a Fase 2. Registrar aqui para sessão dedicad
 
 | Item | Status | Notas |
 |---|---|---|
-| Grid 12 colunas responsivo | ✅ | Migration `000018` + seed 12×5 |
-| Drawers E/I + atalhos | ✅ | `I` personagem, `E` expedição, `1-4` poções |
+| Grid 12 colunas responsivo | ✅ | Drawer direito 12×N, sem scroll horizontal |
+| Drawers E/I + Esc/Tab | ✅ | Esq: equipamento + expedição · Dir: inventário + baús |
 | Nested containers (baú → bag, max 2 níveis) | ✅ | `ContainerNestingService` + baú aceita containers |
-| Rename inline + badges de acceptance | ✅ | PATCH rename + badge no header |
-| Auto-organize (bin-packing) | ✅ | POST `/organize` + botão UI |
-| Split view ao abrir baú | ✅ | Main + chest lado a lado |
+| Rename inline de baús/bags | ✅ | Duplo clique no título + `PATCH /containers/{id}/rename` |
+| Badges acceptance + borda por tipo | ✅ | Ícones + tooltip + `tone` no header |
+| Auto-organize (5 modos) | ✅ | tipo/raridade/tamanho/nome/compactar |
+| Split view ao abrir baú | ✅ | Main + chest lado a lado no drawer direito |
 | Breadcrumb `parent_chain` | ✅ | Snapshot API |
 | Expedition: peso/quick-access | ⏳ | Debate D7 — hotkeys 1-4 apenas |
 

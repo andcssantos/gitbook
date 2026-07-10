@@ -3,6 +3,7 @@
 namespace App\Console;
 
 use App\Console\Commands\CacheCommand;
+use App\Console\Commands\MarketRecalculateCommand;
 use App\Console\Commands\MigrationCommand;
 use App\Console\Commands\ModuleCommand;
 use App\Console\Commands\RouteCommand;
@@ -35,6 +36,7 @@ class ConsoleKernel
                 'module:build' => (new ModuleCommand())->build(),
                 'make:module' => (new ModuleCommand())->make($args[0] ?? ''),
                 'make:component' => (new ModuleCommand())->makeComponent($args[0] ?? ''),
+                'market:recalculate' => (new MarketRecalculateCommand())->run(),
                 default => $this->help(),
             };
         } catch (Throwable $e) {
@@ -64,6 +66,7 @@ class ConsoleKernel
         echo "  module:build         Gera relatorio/cache otimizado dos modulos\n";
         echo "  make:module nome     Cria modulo em layout/nome ou domain/layout/nome\n";
         echo "  make:component nome  Cria componente compartilhado\n";
+        echo "  market:recalculate   Recalcula oferta/demanda do mercado\n";
 
         return 0;
     }

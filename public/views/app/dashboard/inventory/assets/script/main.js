@@ -5,11 +5,25 @@ import { installToastStyles, toast } from '/assets/framework/toast.js';
 const app = document.querySelector('[data-inventory-app]');
 const containerRoot = document.querySelector('[data-inventory-containers]');
 const equipmentRoot = document.querySelector('[data-inventory-equipment]');
-const dockRoot = document.querySelector('[data-inventory-dock]');
+const expeditionRoot = document.querySelector('[data-inventory-expedition]');
+const leftDrawerRoot = document.querySelector('[data-inventory-drawer-left]');
+const rightDrawerRoot = document.querySelector('[data-inventory-drawer-right]');
+const backdropRoot = document.querySelector('[data-inventory-backdrop]');
+const hubRoot = document.querySelector('[data-inventory-hub]');
+const statsDrawerRoot = document.querySelector('[data-inventory-drawer-stats]');
+const statsDrawerPanel = document.querySelector('[data-character-stats-drawer]');
+const marketToggleButton = document.querySelector('[data-market-toggle]');
 const statusNode = document.querySelector('[data-inventory-status]');
 const summaryNode = document.querySelector('[data-inventory-summary]');
 const refreshButton = document.querySelector('[data-inventory-refresh]');
 const compareDockRoot = document.querySelector('[data-inventory-compare]');
+const marketPanelRoot = document.querySelector('[data-inventory-market]');
+const marketListingsRoot = document.querySelector('[data-market-listings]');
+const marketWalletsRoot = document.querySelector('[data-market-wallets]');
+const materialsPanelRoot = document.querySelector('[data-inventory-materials]');
+const materialsTabsRoot = document.querySelector('[data-materials-tabs]');
+const materialsListRoot = document.querySelector('[data-materials-list]');
+const craftPanelRoot = document.querySelector('[data-inventory-craft]');
 
 installToastStyles();
 installModalStyles();
@@ -93,6 +107,7 @@ function confirmInventoryAction({
     confirmLabel = 'Confirmar',
     cancelLabel = 'Cancelar',
     tone = 'warning',
+    collectData = null,
 }) {
     return new Promise((resolve) => {
         const content = document.createElement('div');
@@ -113,8 +128,23 @@ function confirmInventoryAction({
         };
 
         element.querySelector('.inventory-modal-cancel')?.addEventListener('click', () => finish(false));
-        element.querySelector('.inventory-modal-confirm')?.addEventListener('click', () => finish(true));
+        element.querySelector('.inventory-modal-confirm')?.addEventListener('click', () => {
+            if (typeof collectData === 'function') {
+                finish(collectData(element));
+                return;
+            }
+            finish(true);
+        });
     });
+}
+
+function listingPriceBoundsForItem(item) {
+    const suggested = Number(item?.suggested_premium || 1);
+    const min = Number(item?.listing_price_min || Math.max(1, Math.floor(suggested * 0.5)));
+    const max = Number(item?.listing_price_max || Math.max(min, Math.ceil(suggested * 2)));
+    const defaultPrice = Math.max(min, Math.min(max, suggested));
+
+    return { min, max, suggested, defaultPrice };
 }
 
 function showEnhanceResultModal(jewelType, targetItem, data) {
@@ -253,8 +283,44 @@ let actionInFlight = false;
 let contextMenuState = null;
 let openContainerPublicIds = new Set(JSON.parse(localStorage.getItem('evolvaxe.inventory.openContainers') || '[]'));
 let marketDeliveryOpen = localStorage.getItem('evolvaxe.inventory.marketDeliveryOpen') === '1';
-let expeditionCarryOpen = localStorage.getItem('evolvaxe.inventory.expeditionCarryOpen') !== '0';
-let characterPanelOpen = localStorage.getItem('evolvaxe.inventory.characterPanelOpen') !== '0';
+let marketPanelOpen = false;
+let materialsPanelOpen = false;
+let materialsActiveTab = 'metals';
+let materialStash = { tabs: [], stacks: [], grid: { columns: 12, cell_px: 52 } };
+let materialsLoading = false;
+let materialStackIndex = new Map();
+const CRAFT_DRAG_MIME = 'application/x-evolvaxe-craft-source';
+const CRAFT_SLOT_COUNT = 6;
+let craftPanelOpen = false;
+let craftWorkspace = 'forge';
+let craftSlots = {
+    forge: Array.from({ length: CRAFT_SLOT_COUNT }, () => null),
+    alchemy: Array.from({ length: CRAFT_SLOT_COUNT }, () => null),
+};
+let craftPreview = null;
+let craftPreviewLoading = false;
+let craftWorkspaces = [];
+let craftPickerTab = 'inventory';
+let craftPickerMaterialTab = 'metals';
+let craftPickerQuery = '';
+let craftActiveSlotIndex = null;
+let playerWallets = [];
+let marketListings = [];
+let marketFilters = {
+    q: '',
+    quality_bucket: '',
+    category_code: '',
+    min_price: '',
+    max_price: '',
+};
+let marketLoading = false;
+let expeditionCarryOpen = true;
+let leftDrawerOpen = localStorage.getItem('evolvaxe.inventory.leftDrawer') === '1';
+let rightDrawerOpen = localStorage.getItem('evolvaxe.inventory.rightDrawer') !== '0';
+let statsDrawerOpen = localStorage.getItem('evolvaxe.inventory.statsDrawer') === '1';
+let leftDrawerTab = localStorage.getItem('evolvaxe.inventory.leftDrawerTab') || 'equipment';
+let focusedDrawer = localStorage.getItem('evolvaxe.inventory.focusedDrawer') || 'right';
+let lastCharacterStats = [];
 let equippedBackpackPublicId = null;
 let playerPower = null;
 let currentEquipment = [];
@@ -265,6 +331,7 @@ let splitViewState = JSON.parse(localStorage.getItem('evolvaxe.inventory.splitVi
 let inventorySummaryByPublicId = new Map();
 
 const CELL_SIZE = 44;
+const gridCellSizes = new Map();
 const INVENTORY_DRAG_ENGINE = 'v2';
 const BLESS_JEWEL_CODES = ['jewel_blessing_minor'];
 const SOUL_JEWEL_CODES = ['jewel_soul_minor'];
@@ -315,6 +382,11 @@ function escapeHtml(value) {
 }
 
 function itemLabel(item) {
+    const containerName = item?.linked_container?.name;
+    if (containerName && String(containerName).trim()) {
+        return String(containerName).trim();
+    }
+
     return item.item_name || item.definition?.name || item.definition?.code || 'Item';
 }
 
@@ -481,6 +553,13 @@ function upgradeLevelFromItem(item) {
 }
 
 function baseStatRangeLabel(item, propertyCode) {
+    const bounds = item?.stat_bounds?.[propertyCode];
+    if (bounds) {
+        const min = Math.max(1, Number(bounds.min ?? 1));
+        const cap = Math.max(min, Number(bounds.cap ?? bounds.max ?? min));
+        return `${min}~${cap}`;
+    }
+
     const quality = Number(item?.quality_value || 40);
     const mult = RARITY_RANGE_MULTIPLIER[rarityKey(item)] || 1;
     const levelBonus = 1 + (upgradeLevelFromItem(item) * 0.04);
@@ -551,17 +630,35 @@ function renderTooltipStatLine(label, valueHtml, options = {}) {
     `;
 }
 
-function renderUpgradeStars(item) {
-    const level = upgradeLevelFromItem(item);
-    if (level <= 0) return '';
+const BLESS_STAR_TIERS = ['bronze', 'silver', 'gold', 'purple', 'red'];
 
-    const maxStars = 5;
-    const stars = Array.from({ length: maxStars }, (_, index) => {
-        const filled = index < level ? ' is-filled' : '';
-        return `<span class="inventory-equipment-star${filled}" aria-hidden="true">★</span>`;
+function blessStarState(level) {
+    if (level <= 0) {
+        return { tier: null, filled: 0 };
+    }
+
+    const tierIndex = Math.min(4, Math.floor((level - 1) / 5));
+    const filled = ((level - 1) % 5) + 1;
+
+    return { tier: BLESS_STAR_TIERS[tierIndex], filled };
+}
+
+function renderUpgradeStars(item) {
+    if (!isEquippableItem(item)) return '';
+
+    const level = upgradeLevelFromItem(item);
+    const { tier, filled } = blessStarState(level);
+    const stars = Array.from({ length: 5 }, (_, index) => {
+        const isFilled = index < filled;
+        const tierClass = isFilled && tier ? ` is-tier-${tier}` : '';
+        const filledClass = isFilled ? ' is-filled' : '';
+
+        return `<span class="inventory-upgrade-star${filledClass}${tierClass}" aria-hidden="true">★</span>`;
     }).join('');
 
-    return `<div class="inventory-equipment-stars" aria-label="Nivel de melhoria ${level}">${stars}</div>`;
+    const label = level > 0 ? `Nivel de melhoria ${level}` : 'Sem melhoria';
+
+    return `<div class="inventory-upgrade-stars" aria-label="${label}">${stars}</div>`;
 }
 
 function baseStatRangeLabelBracketed(item, propertyCode) {
@@ -603,13 +700,42 @@ function jewelTooltipProperties(item) {
     return `<ul class="inventory-tooltip-properties">${properties.map((property) => `<li><span>${escapeHtml(property.name)}</span>${tooltipPropertyValue(item, property)}</li>`).join('')}</ul>`;
 }
 
-function tooltipSaleBlock() {
+function itemHasEconomy(item) {
+    return Number(item?.market_value || 0) > 0
+        || Number(item?.npc_value || 0) > 0
+        || Number(item?.suggested_premium || 0) > 0;
+}
+
+function tooltipEconomyFooter(item) {
+    if (!itemHasEconomy(item)) return '';
+
+    const marketValue = Number(item?.market_value || 0);
+    const npcValue = Number(item?.npc_value || 0);
+    const suggestedPremium = Number(item?.suggested_premium || 0);
+    const marketLabel = marketValue > 0 ? `${marketValue.toLocaleString('pt-BR')} G` : '—';
+    const npcLabel = npcValue > 0 ? `${npcValue.toLocaleString('pt-BR')} G` : '—';
+    const premiumLabel = suggestedPremium > 0 ? `${suggestedPremium.toLocaleString('pt-BR')} 💎` : '—';
+
     return `
-        <div class="inventory-tooltip-prices">
-            <div><span>Venda NPC</span><strong>—</strong></div>
-            <div><span>Venda jogador</span><strong>—</strong></div>
-        </div>
+        <footer class="inventory-tooltip-economy" aria-label="Valores de economia">
+            <div class="inventory-tooltip-economy-item is-gold">
+                <span class="inventory-tooltip-economy-label">Ouro NPC</span>
+                <strong>${escapeHtml(npcLabel)}</strong>
+            </div>
+            <div class="inventory-tooltip-economy-item is-gold">
+                <span class="inventory-tooltip-economy-label">Referencia</span>
+                <strong>${escapeHtml(marketLabel)}</strong>
+            </div>
+            <div class="inventory-tooltip-economy-item is-premium">
+                <span class="inventory-tooltip-economy-label">Eter Cristal</span>
+                <strong>${escapeHtml(premiumLabel)}</strong>
+            </div>
+        </footer>
     `;
+}
+
+function tooltipSaleBlock(item) {
+    return tooltipEconomyFooter(item);
 }
 
 function itemCategoryCode(item) {
@@ -697,10 +823,47 @@ function renderTooltipSetBlock(item) {
     `;
 }
 
-function renderItemTypeBadge(item) {
-    if (item?.definition?.is_container) return '';
-    const typeMeta = resolveItemTypeMeta(item);
-    return `<span class="inventory-item-type-badge is-${escapeHtml(typeMeta.tone)}" title="${escapeHtml(typeMeta.label)}">${escapeHtml(typeMeta.icon)}</span>`;
+function formatAffixDisplayName(name) {
+    return String(name || '').trim().replace(/^da\s+/i, '');
+}
+
+function isStorageContainerItem(item) {
+    return Boolean(item?.definition?.is_container && item?.linked_container?.public_id);
+}
+
+function canContainerAcceptItem(container, item) {
+    if (!container || !item) return true;
+
+    const summary = container.acceptance_summary;
+    if (!summary) return true;
+
+    if (summary.accepts_all || summary.allowed_categories == null) {
+        if (item.definition?.is_container && summary.blocks_containers) {
+            return false;
+        }
+        return true;
+    }
+
+    if (item.definition?.is_container) {
+        return Boolean(summary.allows_container_items) && !summary.blocks_containers;
+    }
+
+    const category = itemCategoryCode(item);
+    const allowed = new Set(summary.allowed_categories || []);
+    return allowed.has(category);
+}
+
+function acceptanceRejectionMessage(container) {
+    const summary = container?.acceptance_summary;
+    if (!summary?.tooltip) {
+        return 'Este container nao aceita o item selecionado.';
+    }
+
+    return summary.tooltip.endsWith('.') ? summary.tooltip : `${summary.tooltip}.`;
+}
+
+function renderItemTypeBadge() {
+    return '';
 }
 
 function setGlowLevel(setCode, setBonuses = []) {
@@ -748,6 +911,8 @@ function renderComparePanel() {
     const itemPower = itemPowerValue(item);
     const equippedPower = itemPowerValue(equipped);
     const powerDelta = itemPower - equippedPower;
+    const candidatePros = renderCompareHighlights(item, equipped);
+    const equippedPros = renderCompareHighlights(equipped, item);
 
     compareDockRoot.hidden = false;
     compareDockRoot.classList.add('is-open');
@@ -760,18 +925,12 @@ function renderComparePanel() {
             <button type="button" class="inventory-compare-close" aria-label="Fechar comparacao">×</button>
         </header>
         <div class="inventory-compare-grid">
-            <section class="inventory-compare-card rarity-${rarityKey(item)}">
-                <span class="inventory-compare-label">Candidato</span>
-                ${itemTooltip(item, { compareWith: equipped, inline: true })}
-            </section>
-            <section class="inventory-compare-card rarity-${rarityKey(equipped)}">
-                <span class="inventory-compare-label">Equipado</span>
-                ${itemTooltip(equipped, { compareWith: item, inline: true })}
-            </section>
+            ${renderCompareSideCard('Candidato', item, equipped, candidatePros)}
+            ${renderCompareSideCard('Equipado', equipped, item, equippedPros)}
         </div>
         <footer class="inventory-compare-footer">
-            <div>
-                <span>Poder</span>
+            <div class="inventory-compare-footer-power">
+                <span>Poder do candidato</span>
                 <strong>${itemPower}</strong>
                 ${formatStatDelta(powerDelta)}
             </div>
@@ -780,6 +939,76 @@ function renderComparePanel() {
     `;
 
     compareDockRoot.querySelector('.inventory-compare-close')?.addEventListener('click', closeComparePanel);
+}
+
+function renderCompareSideCard(label, item, compareWith, highlights) {
+    const assetUrl = itemAssetUrl(item);
+    const typeMeta = resolveItemTypeMeta(item);
+    const upgradeLevel = upgradeLevelFromItem(item);
+    const power = itemPowerValue(item);
+    const comparePower = itemPowerValue(compareWith);
+    const powerDelta = formatStatDelta(power - comparePower);
+
+    return `
+        <section class="inventory-compare-card rarity-${rarityKey(item)}">
+            <span class="inventory-compare-label">${escapeHtml(label)}</span>
+            <div class="inventory-compare-hero">
+                <div class="inventory-compare-hero-art${assetUrl ? '' : ' is-placeholder'}">
+                    ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="" loading="lazy">` : `<span>${escapeHtml(typeMeta.icon)}</span>`}
+                </div>
+                <div class="inventory-compare-hero-copy">
+                    <strong>${escapeHtml(itemLabel(item))}</strong>
+                    <div class="inventory-compare-hero-meta">
+                        <span class="inventory-tooltip-type-badge is-${escapeHtml(typeMeta.tone)}">${escapeHtml(typeMeta.icon)} ${escapeHtml(typeMeta.label)}</span>
+                        ${upgradeLevel > 0 ? `<span class="inventory-tooltip-upgrade">+${upgradeLevel}</span>` : ''}
+                    </div>
+                    <div class="inventory-compare-power-line">
+                        <span>Poder</span>
+                        <b>${power}</b>${powerDelta}
+                    </div>
+                </div>
+            </div>
+            <div class="inventory-compare-highlights">
+                ${highlights.gains.length ? `<div class="inventory-compare-highlight is-positive"><span>Vantagens</span><ul>${highlights.gains.map((line) => `<li>${line}</li>`).join('')}</ul></div>` : ''}
+                ${highlights.losses.length ? `<div class="inventory-compare-highlight is-negative"><span>Desvantagens</span><ul>${highlights.losses.map((line) => `<li>${line}</li>`).join('')}</ul></div>` : ''}
+                ${!highlights.gains.length && !highlights.losses.length ? '<p class="inventory-compare-neutral">Sem diferencas relevantes nos atributos principais.</p>' : ''}
+            </div>
+            ${renderTooltipSetBlock(item)}
+        </section>
+    `;
+}
+
+function renderCompareHighlights(item, compareWith) {
+    const gains = [];
+    const losses = [];
+    const seen = new Set();
+
+    const pushDelta = (label, delta, unit = '') => {
+        const key = `${label}:${delta}`;
+        if (seen.has(key) || Math.abs(delta) < 0.05) return;
+        seen.add(key);
+        const formatted = formatStatDelta(delta, unit).replace(/[()]/g, '');
+        const text = `${escapeHtml(label)} <strong>${formatted || `${delta > 0 ? '+' : ''}${Number.isInteger(delta) ? delta : delta.toFixed(1)}${unit ? ` ${escapeHtml(unit)}` : ''}`}</strong>`;
+        if (delta > 0) gains.push(text);
+        if (delta < 0) losses.push(text);
+    };
+
+    for (const property of (item.properties || [])) {
+        const code = String(property.code || '');
+        if (!BASE_STAT_CODES.includes(code)) continue;
+        const compareProperty = (compareWith.properties || []).find((entry) => String(entry.code || '') === code);
+        if (!compareProperty) continue;
+        pushDelta(BASE_STAT_LABELS[code] || property.name, propertyNumericValue(property) - propertyNumericValue(compareProperty), property.unit || '');
+    }
+
+    for (const affix of (item.affixes || [])) {
+        const compareAffix = (compareWith.affixes || []).find((entry) => String(entry.property_code || '') === String(affix.property_code || ''));
+        const currentValue = propertyNumericValue(affix);
+        const compareValue = compareAffix ? propertyNumericValue(compareAffix) : 0;
+        pushDelta(formatAffixDisplayName(affix.name), currentValue - compareValue, affix.unit || '');
+    }
+
+    return { gains: gains.slice(0, 5), losses: losses.slice(0, 5) };
 }
 
 function itemTooltip(item, options = {}) {
@@ -839,7 +1068,7 @@ function itemTooltip(item, options = {}) {
                 ? formatStatDelta(propertyNumericValue(affix) - propertyNumericValue(compareAffix), affix.unit || '')
                 : '';
             return renderTooltipStatLine(
-                affix.name,
+                formatAffixDisplayName(affix.name),
                 `<strong>+${escapeHtml(formatItemPropertyValue(affix))} ${escapeHtml(affix.property_name || '')}</strong>${delta}`
             );
         }).join('')}</ul>`
@@ -869,7 +1098,6 @@ function itemTooltip(item, options = {}) {
                 ${mergeable || quantity > 1 ? `<div><dt>Quantidade</dt><dd>${quantity}</dd></div>` : ''}
                 ${!mergeable && item.quality_value !== null && item.quality_value !== undefined ? `<div><dt>Qualidade</dt><dd>${Number(item.quality_value).toFixed(1)}</dd></div>` : ''}
             </dl>
-            ${mergeable || jewel ? tooltipSaleBlock() : ''}
             <small class="inventory-tooltip-hint">Arraste para mover. Pressione R ou Q durante o arraste para rotacionar.</small>
         `;
 
@@ -890,7 +1118,6 @@ function itemTooltip(item, options = {}) {
             <h4>Uso</h4>
             <p>${item.definition?.description ? escapeHtml(item.definition.description) : 'Item consumivel ou moeda.'}</p>
             ${mergeable || quantity > 1 ? `<p><strong>Quantidade:</strong> ${quantity}</p>` : ''}
-            ${tooltipSaleBlock()}
         </div>`
         : '';
 
@@ -927,12 +1154,15 @@ function itemTooltip(item, options = {}) {
         </div>`
         : '';
 
+    const economyFooter = tooltipEconomyFooter(item);
+
     return `
         <div class="inventory-tooltip rarity-${rarityKey(item)} is-type-${escapeHtml(categoryCode)}${inline ? ' is-inline' : ''}">
             ${hero}
             ${titleBlock}
             <div class="inventory-tooltip-tags">${tags.map((tag) => `<span>${tag}</span>`).join('')}</div>
             ${details}
+            ${economyFooter}
         </div>
     `;
 }
@@ -950,8 +1180,1825 @@ function persistContainerPanels() {
     localStorage.setItem('evolvaxe.inventory.expeditionCarryOpen', expeditionCarryOpen ? '1' : '0');
 }
 
+function persistDrawerState() {
+    localStorage.setItem('evolvaxe.inventory.leftDrawer', leftDrawerOpen ? '1' : '0');
+    localStorage.setItem('evolvaxe.inventory.rightDrawer', rightDrawerOpen ? '1' : '0');
+    localStorage.setItem('evolvaxe.inventory.statsDrawer', statsDrawerOpen ? '1' : '0');
+    localStorage.setItem('evolvaxe.inventory.leftDrawerTab', leftDrawerTab);
+    localStorage.setItem('evolvaxe.inventory.focusedDrawer', focusedDrawer);
+}
+
+function syncDrawerUi() {
+    app?.classList.toggle('is-left-drawer-open', leftDrawerOpen);
+    app?.classList.toggle('is-right-drawer-open', rightDrawerOpen);
+    app?.classList.toggle('is-stats-drawer-open', statsDrawerOpen);
+    app?.classList.toggle('is-market-open', marketPanelOpen);
+    app?.classList.toggle('is-materials-open', materialsPanelOpen);
+    app?.classList.toggle('is-craft-open', craftPanelOpen);
+    app?.classList.toggle('is-drawer-focus-left', focusedDrawer === 'left');
+    app?.classList.toggle('is-drawer-focus-right', focusedDrawer === 'right');
+    app?.classList.toggle('is-drawer-focus-stats', focusedDrawer === 'stats');
+    if (backdropRoot) backdropRoot.hidden = !(leftDrawerOpen || rightDrawerOpen || statsDrawerOpen || marketPanelOpen || materialsPanelOpen || craftPanelOpen);
+    if (hubRoot) hubRoot.hidden = leftDrawerOpen || rightDrawerOpen || statsDrawerOpen || marketPanelOpen || materialsPanelOpen || craftPanelOpen;
+    if (statsDrawerRoot) statsDrawerRoot.hidden = !statsDrawerOpen;
+    if (marketPanelRoot) {
+        marketPanelRoot.hidden = !marketPanelOpen;
+        marketPanelRoot.setAttribute('aria-hidden', marketPanelOpen ? 'false' : 'true');
+    }
+    if (materialsPanelRoot) {
+        materialsPanelRoot.hidden = !materialsPanelOpen;
+        materialsPanelRoot.setAttribute('aria-hidden', materialsPanelOpen ? 'false' : 'true');
+    }
+    if (craftPanelRoot) {
+        craftPanelRoot.hidden = !craftPanelOpen;
+        craftPanelRoot.setAttribute('aria-hidden', craftPanelOpen ? 'false' : 'true');
+    }
+}
+
+function walletBalance(code) {
+    const wallet = playerWallets.find((entry) => entry.currency_code === code || entry.code === code);
+    return Number(wallet?.balance || 0);
+}
+
+function renderMarketWallets() {
+    if (!marketWalletsRoot) return;
+
+    const gold = walletBalance('gold');
+    const premium = walletBalance('premium');
+    marketWalletsRoot.innerHTML = `
+        <span class="inventory-market-wallet is-gold" title="Ouro">${gold.toLocaleString('pt-BR')} G</span>
+        <span class="inventory-market-wallet is-premium" title="Eter Cristal">${premium.toLocaleString('pt-BR')} 💎</span>
+    `;
+}
+
+function marketListingSummaryLines(item) {
+    const lines = [];
+    const upgradeLevel = upgradeLevelFromItem(item);
+    const quantity = Number(item?.quantity || 1);
+    const quality = item?.quality_bucket ? String(item.quality_bucket) : null;
+    const typeMeta = resolveItemTypeMeta(item);
+
+    if (upgradeLevel > 0) lines.push(`Melhoria +${upgradeLevel}`);
+    if (quality) lines.push(`Raridade ${quality}`);
+    lines.push(typeMeta.label);
+    if (quantity > 1) lines.push(`Quantidade ${quantity}`);
+
+    const affixes = Array.isArray(item?.affixes) ? item.affixes.slice(0, 3) : [];
+    affixes.forEach((affix) => {
+        const unit = affix.unit ? String(affix.unit) : '';
+        lines.push(`${affix.name}: +${affix.value}${unit}`);
+    });
+
+    const baseStats = Array.isArray(item?.properties)
+        ? item.properties.filter((prop) => ['strength', 'defense', 'vitality', 'agility'].includes(String(prop.code || ''))).slice(0, 3)
+        : [];
+    baseStats.forEach((prop) => {
+        lines.push(`${prop.name}: ${prop.value}`);
+    });
+
+    return lines.slice(0, 6);
+}
+
+function formatMarketListedAt(value) {
+    if (!value) return '—';
+    const date = new Date(String(value).replace(' ', 'T'));
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function bindMarketListingTooltips() {
+    if (!marketListingsRoot || !window.tippy) return;
+
+    marketListingsRoot.querySelectorAll('[data-market-item-preview]').forEach((node) => {
+        if (node._tippy) return;
+        const listingId = node.getAttribute('data-market-item-preview');
+        const listing = marketListings.find((entry) => entry.listing_public_id === listingId);
+        if (!listing?.item) return;
+
+        window.tippy(node, {
+            allowHTML: true,
+            content: itemTooltip(listing.item),
+            theme: 'evolvaxe-item',
+            placement: 'right',
+            interactive: true,
+            appendTo: () => document.body,
+            delay: [160, 60],
+        });
+    });
+}
+
+function renderMarketListings() {
+    if (!marketListingsRoot) return;
+
+    if (marketLoading) {
+        marketListingsRoot.innerHTML = '<p class="inventory-market-empty">Carregando anuncios...</p>';
+        return;
+    }
+
+    if (!marketListings.length) {
+        marketListingsRoot.innerHTML = '<p class="inventory-market-empty">Nenhum anuncio encontrado.</p>';
+        return;
+    }
+
+    marketListingsRoot.innerHTML = marketListings.map((listing) => {
+        const item = listing.item || {};
+        const name = itemLabel(item);
+        const quality = item.quality_bucket ? String(item.quality_bucket) : 'common';
+        const category = item.category_code || item.definition?.category_code || 'material';
+        const price = Number(listing.price_premium || 0);
+        const canAfford = walletBalance('premium') >= price;
+        const isOwn = Boolean(listing.is_own_listing);
+        const seller = listing.seller || {};
+        const sellerName = seller.name || 'Jogador';
+        const sellerLevel = Number(seller.level || 1);
+        const assetUrl = itemAssetUrl(item);
+        const summaryLines = marketListingSummaryLines(item);
+        const upgradeLevel = upgradeLevelFromItem(item);
+
+        return `
+            <article class="inventory-market-card rarity-${escapeHtml(quality)}${isOwn ? ' is-own' : ''}">
+                <div class="inventory-market-card-preview" data-market-item-preview="${escapeHtml(listing.listing_public_id)}">
+                    <div class="inventory-market-card-art${assetUrl ? '' : ' is-placeholder'}">
+                        ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="" loading="lazy">` : `<span>${escapeHtml(resolveItemTypeMeta(item).icon)}</span>`}
+                    </div>
+                    <div class="inventory-market-card-copy">
+                        <div class="inventory-market-card-head">
+                            <strong>${escapeHtml(name)}${upgradeLevel > 0 ? ` <small>+${upgradeLevel}</small>` : ''}</strong>
+                            <span class="inventory-market-card-price">${price.toLocaleString('pt-BR')} 💎</span>
+                        </div>
+                        <div class="inventory-market-card-meta">
+                            <span>${escapeHtml(quality)}</span>
+                            <span>${escapeHtml(category)}</span>
+                        </div>
+                        <ul class="inventory-market-card-stats">
+                            ${summaryLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}
+                        </ul>
+                    </div>
+                </div>
+                <div class="inventory-market-card-seller">
+                    <span>Vendedor</span>
+                    <strong>${escapeHtml(sellerName)}</strong>
+                    <small>Nv. ${sellerLevel} · ${escapeHtml(formatMarketListedAt(listing.listed_at))}</small>
+                </div>
+                <div class="inventory-market-card-actions">
+                    ${isOwn
+                        ? `<button type="button" class="inventory-button inventory-button-ghost inventory-market-cancel" data-market-cancel="${escapeHtml(listing.listing_public_id)}">Remover anuncio</button>`
+                        : `<button
+                            type="button"
+                            class="inventory-button inventory-market-buy"
+                            data-market-buy="${escapeHtml(listing.listing_public_id)}"
+                            ${canAfford ? '' : 'disabled'}
+                        >${canAfford ? 'Comprar' : 'Saldo insuficiente'}</button>`}
+                </div>
+            </article>
+        `;
+    }).join('');
+
+    bindMarketListingTooltips();
+}
+
+async function loadMarketListings() {
+    if (!marketPanelOpen || marketLoading) return;
+
+    marketLoading = true;
+    renderMarketListings();
+
+    try {
+        const params = new URLSearchParams();
+        if (marketFilters.q) params.set('q', marketFilters.q);
+        if (marketFilters.quality_bucket) params.set('quality_bucket', marketFilters.quality_bucket);
+        if (marketFilters.category_code) params.set('category_code', marketFilters.category_code);
+        if (marketFilters.min_price) params.set('min_price', marketFilters.min_price);
+        if (marketFilters.max_price) params.set('max_price', marketFilters.max_price);
+        params.set('limit', '60');
+
+        const response = await apiFetch(`/api/market/listings?${params.toString()}`);
+        marketListings = response.data?.listings || [];
+    } catch (error) {
+        marketListings = [];
+        handleError(error, 'Nao foi possivel carregar o mercado.');
+    } finally {
+        marketLoading = false;
+        renderMarketListings();
+    }
+}
+
+function syncMarketFilterInputs() {
+    if (!marketPanelRoot) return;
+
+    const searchInput = marketPanelRoot.querySelector('[data-market-filter-q]');
+    const qualitySelect = marketPanelRoot.querySelector('[data-market-filter-quality]');
+    const categorySelect = marketPanelRoot.querySelector('[data-market-filter-category]');
+    const minInput = marketPanelRoot.querySelector('[data-market-filter-min]');
+    const maxInput = marketPanelRoot.querySelector('[data-market-filter-max]');
+
+    if (searchInput) searchInput.value = marketFilters.q;
+    if (qualitySelect) qualitySelect.value = marketFilters.quality_bucket;
+    if (categorySelect) categorySelect.value = marketFilters.category_code;
+    if (minInput) minInput.value = marketFilters.min_price;
+    if (maxInput) maxInput.value = marketFilters.max_price;
+}
+
+function openMarketPanel() {
+    materialsPanelOpen = false;
+    craftPanelOpen = false;
+    marketPanelOpen = true;
+    syncDrawerUi();
+    renderMarketWallets();
+    syncMarketFilterInputs();
+    loadMarketListings();
+}
+
+function closeMarketPanel() {
+    marketPanelOpen = false;
+    syncDrawerUi();
+}
+
+function toggleMarketPanel() {
+    if (marketPanelOpen) {
+        closeMarketPanel();
+        return;
+    }
+    openMarketPanel();
+}
+
+async function cancelMarketListing(listingPublicId) {
+    if (actionInFlight || loading || !listingPublicId) return;
+
+    const listing = marketListings.find((entry) => entry.listing_public_id === listingPublicId);
+    if (!listing) return;
+
+    const itemName = itemLabel(listing.item || {});
+    const confirmed = await confirmInventoryAction({
+        title: 'Remover anuncio',
+        bodyHtml: `<p>Remover <strong>${escapeHtml(itemName)}</strong> do mercado?</p>
+            <p>O item voltara para seu inventario principal. A taxa de anuncio nao e reembolsada.</p>`,
+        confirmLabel: 'Remover',
+        tone: 'danger',
+    });
+    if (!confirmed) return;
+
+    actionInFlight = true;
+    try {
+        setStatus('Removendo anuncio...');
+        await apiFetch(`/api/market/listings/${encodeURIComponent(listingPublicId)}/cancel`, {
+            method: 'POST',
+            body: {},
+        });
+        toast('Anuncio removido. Item devolvido ao inventario.', 'success', 3600);
+        setStatus('Sincronizado');
+        await loadInventory();
+        await loadMarketListings();
+    } catch (error) {
+        handleError(error, 'Nao foi possivel remover o anuncio.');
+    } finally {
+        actionInFlight = false;
+    }
+}
+
+function materialAssetUrl(stack) {
+    const url = String(stack?.icon_url || '').trim();
+    if (url) return url;
+
+    const familyCode = String(stack?.family_code || '').trim();
+    if (!/^[a-z0-9_-]+$/i.test(familyCode)) return null;
+
+    return `/assets/game/materials/${familyCode}.png`;
+}
+
+function materialTabIcon(tabCode) {
+    const tab = (materialStash.tabs || []).find((entry) => entry.code === tabCode);
+    return tab?.icon || '◆';
+}
+
+function materialStackKey(stack) {
+    return String(stack?.stack_key || `${stack?.family_code || ''}::${stack?.origin_code || ''}`);
+}
+
+function buildCraftDragPayload(source) {
+    if (!source || typeof source !== 'object') return null;
+
+    if (source.kind === 'material_stack') {
+        const stack = materialStackIndex.get(source.stack_key || materialStackKey(source)) || source;
+        return {
+            kind: 'material_stack',
+            stack_key: materialStackKey(stack),
+            family_code: stack.family_code || '',
+            origin_code: stack.origin_code || '',
+            label: stack.label || stack.family_name || 'Material',
+            quantity_available: Number(stack.quantity || 1),
+            asset_url: materialAssetUrl(stack),
+            stash_tab: stack.stash_tab || materialsActiveTab,
+        };
+    }
+
+    if (source.kind === 'item_instance' || source.public_id) {
+        const item = source.item || source;
+        return {
+            kind: 'item_instance',
+            public_id: item.public_id,
+            label: itemLabel(item),
+            quantity_available: Number(item.quantity || 1),
+            asset_url: itemAssetUrl(item),
+            category_code: itemCategoryCode(item),
+            definition_code: item.definition?.code || '',
+        };
+    }
+
+    return null;
+}
+
+function parseCraftDragPayload(dataTransfer) {
+    if (!dataTransfer) return null;
+
+    const raw = dataTransfer.getData(CRAFT_DRAG_MIME);
+    if (!raw) return null;
+
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+window.EvolvaxeCraft = {
+    mime: CRAFT_DRAG_MIME,
+    buildPayload: buildCraftDragPayload,
+    parsePayload: parseCraftDragPayload,
+};
+
+function materialStackTooltip(stack) {
+    const assetUrl = materialAssetUrl(stack);
+    const tabIcon = materialTabIcon(stack.stash_tab);
+    const familyDescription = String(stack.family_description || '').trim();
+    const originDescription = String(stack.origin_description || '').trim();
+    const description = familyDescription || originDescription || 'Material de crafting armazenado fora do inventario principal.';
+    const originLine = stack.origin_name && stack.origin_name !== stack.family_name
+        ? `<li><span>Origem</span><strong>${escapeHtml(stack.origin_name)}</strong></li>`
+        : '';
+
+    return `
+        <div class="inventory-tooltip rarity-common is-type-material is-inline">
+            <div class="inventory-tooltip-hero">
+                <div class="inventory-tooltip-hero-art${assetUrl ? '' : ' is-placeholder'}">
+                    ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="" loading="lazy" onerror="this.remove(); this.parentElement.classList.add('is-placeholder');">` : `<span>${escapeHtml(tabIcon)}</span>`}
+                </div>
+                <div class="inventory-tooltip-hero-copy">
+                    <div class="inventory-tooltip-hero-title">${escapeHtml(stack.label || stack.family_name || 'Material')}</div>
+                    <div class="inventory-tooltip-hero-meta">
+                        <span class="inventory-tooltip-type-badge is-material">${escapeHtml(tabIcon)} Materia-prima</span>
+                        <span class="inventory-tooltip-upgrade">x${Number(stack.quantity || 0).toLocaleString('pt-BR')}</span>
+                    </div>
+                </div>
+            </div>
+            <p class="inventory-tooltip-description">${escapeHtml(description)}</p>
+            <ul class="inventory-tooltip-properties">
+                <li><span>Familia</span><strong>${escapeHtml(stack.family_name || stack.family_code || '-')}</strong></li>
+                ${originLine}
+            </ul>
+            <small class="inventory-tooltip-hint">Arraste para forja ou alquimia quando a receita estiver aberta.</small>
+        </div>
+    `;
+}
+
+function renderMaterialStack(stack) {
+    const quantity = Number(stack.quantity || 0);
+    const assetUrl = materialAssetUrl(stack);
+    const tabIcon = materialTabIcon(stack.stash_tab);
+    const stackKey = materialStackKey(stack);
+    const label = stack.label || stack.family_name || 'Material';
+
+    return `
+        <div class="grid-stack-item inventory-materials-stack" data-material-stack-key="${escapeHtml(stackKey)}">
+            <div class="grid-stack-item-content" data-material-stack-cell="${escapeHtml(stackKey)}">
+                <div class="inventory-item is-tiny is-compact is-material-stack rarity-common${assetUrl ? ' has-art' : ''}"
+                    data-material-stack-key="${escapeHtml(stackKey)}"
+                    data-craft-draggable="material_stack"
+                    draggable="true"
+                    aria-label="${escapeHtml(label)}">
+                    ${assetUrl ? `<img class="inventory-item-art" src="${escapeHtml(assetUrl)}" alt="" loading="lazy" onerror="this.closest('.inventory-item')?.classList.add('has-missing-art'); this.remove();">` : `<span class="inventory-item-fallback" aria-hidden="true">${escapeHtml(tabIcon)}</span>`}
+                    <span class="inventory-item-name">${escapeHtml(stack.family_name || label)}</span>
+                    <span class="inventory-item-quantity">x${quantity.toLocaleString('pt-BR')}</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function destroyMaterialStackTooltips() {
+    if (!materialsListRoot) return;
+
+    materialsListRoot.querySelectorAll('[data-material-stack-cell]').forEach((node) => {
+        if (node._tippy) node._tippy.destroy();
+    });
+}
+
+function bindMaterialStackInteractions() {
+    destroyMaterialStackTooltips();
+    if (!materialsListRoot) return;
+
+    materialsListRoot.querySelectorAll('[data-material-stack-cell]').forEach((node) => {
+        const stackKey = node.getAttribute('data-material-stack-cell') || '';
+        const stack = materialStackIndex.get(stackKey);
+        if (!stack || !window.tippy) return;
+
+        window.tippy(node, {
+            allowHTML: true,
+            content: materialStackTooltip(stack),
+            theme: 'evolvaxe-item',
+            placement: 'auto',
+            interactive: true,
+            appendTo: () => document.body,
+            popperOptions: { strategy: 'fixed' },
+            delay: [160, 60],
+        });
+    });
+
+    materialsListRoot.querySelectorAll('[data-craft-draggable]').forEach((node) => {
+        node.addEventListener('dragstart', (event) => {
+            const stackKey = node.getAttribute('data-material-stack-key') || '';
+            const stack = materialStackIndex.get(stackKey);
+            const payload = buildCraftDragPayload({ kind: 'material_stack', ...stack, stack_key: stackKey });
+            if (!payload || !event.dataTransfer) return;
+
+            event.dataTransfer.effectAllowed = 'copy';
+            event.dataTransfer.setData(CRAFT_DRAG_MIME, JSON.stringify(payload));
+            event.dataTransfer.setData('text/plain', payload.label || 'Material');
+            node.classList.add('is-craft-dragging');
+        });
+
+        node.addEventListener('dragend', () => {
+            node.classList.remove('is-craft-dragging');
+        });
+    });
+}
+
+function renderMaterialsPanel() {
+    if (!materialsTabsRoot || !materialsListRoot) return;
+
+    const tabs = materialStash.tabs?.length
+        ? materialStash.tabs
+        : [
+            { code: 'metals', name: 'Metais', icon: '⚙' },
+            { code: 'gems', name: 'Gemas', icon: '💠' },
+            { code: 'essences', name: 'Essencias', icon: '✦' },
+            { code: 'fragments', name: 'Fragmentos', icon: '◆' },
+        ];
+
+    materialsTabsRoot.innerHTML = tabs.map((tab) => `
+        <button type="button" class="inventory-materials-tab${materialsActiveTab === tab.code ? ' is-active' : ''}" data-materials-tab="${escapeHtml(tab.code)}">
+            ${escapeHtml(tab.icon || '◆')} ${escapeHtml(tab.name)}
+        </button>
+    `).join('');
+
+    if (materialsLoading) {
+        materialsListRoot.className = 'inventory-materials-grid-host is-loading';
+        materialsListRoot.innerHTML = '<p class="inventory-materials-empty">Carregando materiais...</p>';
+        return;
+    }
+
+    const stacks = (materialStash.stacks || []).filter((stack) => stack.stash_tab === materialsActiveTab);
+    const columns = Number(materialStash.grid?.columns || 12);
+    const cellPx = Number(materialStash.grid?.cell_px || 52);
+    materialStackIndex = new Map(stacks.map((stack) => [materialStackKey(stack), stack]));
+
+    if (!stacks.length) {
+        materialsListRoot.className = 'inventory-materials-grid-host is-empty';
+        materialsListRoot.innerHTML = '<p class="inventory-materials-empty">Nenhum material nesta aba.</p>';
+        return;
+    }
+
+    const rows = Math.max(1, Math.ceil(stacks.length / columns));
+    materialsListRoot.className = 'inventory-materials-grid-host';
+    materialsListRoot.innerHTML = `
+        <div class="inventory-materials-grid"
+            data-materials-grid
+            style="--inventory-columns:${columns}; --inventory-rows:${rows}; --inventory-cell:${cellPx}px;">
+            ${stacks.map((stack) => renderMaterialStack(stack)).join('')}
+        </div>
+    `;
+    bindMaterialStackInteractions();
+}
+
+async function loadMaterialsStash() {
+    if (!materialsPanelOpen || materialsLoading) return;
+
+    materialsLoading = true;
+    renderMaterialsPanel();
+
+    try {
+        const response = await apiFetch('/api/inventory/materials');
+        materialStash = response.data || { tabs: [], stacks: [] };
+    } catch (error) {
+        materialStash = { tabs: [], stacks: [] };
+        handleError(error, 'Nao foi possivel carregar os materiais.');
+    } finally {
+        materialsLoading = false;
+        renderMaterialsPanel();
+    }
+}
+
+function openMaterialsPanel() {
+    marketPanelOpen = false;
+    craftPanelOpen = false;
+    materialsPanelOpen = true;
+    syncDrawerUi();
+    loadMaterialsStash();
+}
+
+function closeMaterialsPanel() {
+    materialsPanelOpen = false;
+    syncDrawerUi();
+}
+
+function toggleMaterialsPanel() {
+    if (materialsPanelOpen) closeMaterialsPanel();
+    else openMaterialsPanel();
+}
+
+function craftStarPointStyle(index) {
+    const angle = (-90 + (index * 60)) * (Math.PI / 180);
+    const radius = 42;
+    return {
+        left: `${50 + (radius * Math.cos(angle))}%`,
+        top: `${50 + (radius * Math.sin(angle))}%`,
+    };
+}
+
+function currentCraftSlotState() {
+    return craftSlots[craftWorkspace] || Array.from({ length: CRAFT_SLOT_COUNT }, () => null);
+}
+
+function craftWorkspaceMeta(code = craftWorkspace) {
+    return craftWorkspaces.find((entry) => entry.code === code) || {
+        code,
+        name: code === 'alchemy' ? 'Alquimia' : 'Forja',
+        subtitle: '',
+        description: '',
+        aura_color: code === 'alchemy' ? '#8b5cf6' : '#f59e0b',
+        accent_color: code === 'alchemy' ? '#c084fc' : '#fbbf24',
+    };
+}
+
+function craftSourceKey(payload) {
+    if (!payload) return '';
+    if (payload.kind === 'material_stack') return `material:${payload.stack_key || `${payload.family_code}::${payload.origin_code}`}`;
+    if (payload.kind === 'item_instance') return `item:${payload.public_id}`;
+    return '';
+}
+
+function craftAllocationCounts() {
+    const counts = new Map();
+    for (const slot of currentCraftSlotState()) {
+        if (!slot?.source) continue;
+        const key = craftSourceKey(slot.source);
+        if (!key) continue;
+        counts.set(key, (counts.get(key) || 0) + Number(slot.source.quantity || 1));
+    }
+    return counts;
+}
+
+function craftRemainingQuantity(payload) {
+    if (!payload) return 0;
+    const total = Number(payload.quantity_available || 1);
+    const key = craftSourceKey(payload);
+    const allocated = craftAllocationCounts().get(key) || 0;
+    return Math.max(0, total - allocated);
+}
+
+function craftCanAddPayload(payload) {
+    return craftRemainingQuantity(payload) > 0;
+}
+
+function craftItemEligibility(item) {
+    if (!item) return { ok: false, reason: 'Item invalido' };
+    if (item?.definition?.is_collectible) return { ok: false, reason: 'Colecionavel' };
+    if (item?.definition?.is_event_item) return { ok: false, reason: 'Evento' };
+    if (item?.definition?.is_container && Number(item?.linked_container?.item_count || 0) > 0) {
+        return { ok: false, reason: 'Bau cheio' };
+    }
+    if (item?.state && item.state !== 'available') return { ok: false, reason: 'Indisponivel' };
+    return { ok: true, reason: null };
+}
+
+function craftCompatibilityClass(label = '') {
+    const normalized = String(label || '').toLowerCase();
+    if (normalized === 'compativel') return 'is-compatible';
+    if (normalized === 'parcial') return 'is-partial';
+    if (normalized === 'incompativel') return 'is-incompatible';
+    return 'is-insufficient';
+}
+
+function craftUsedSourceKeys() {
+    return new Set([...craftAllocationCounts().keys()]);
+}
+
+function collectCraftInventoryEntries() {
+    const entries = [];
+    const seen = new Set();
+
+    for (const container of containerIndex.values()) {
+        const kind = containerKind(container);
+        if (kind === 'market_escrow') continue;
+
+        for (const item of container.items || []) {
+            if (!item?.public_id || seen.has(item.public_id)) continue;
+            seen.add(item.public_id);
+            entries.push({
+                item,
+                badge: containerDisplayName(container),
+                location: 'inventory',
+            });
+        }
+    }
+
+    return entries.sort((left, right) => itemLabel(left.item).localeCompare(itemLabel(right.item), 'pt-BR'));
+}
+
+function craftPickerMatchesQuery(label, extra = '') {
+    const query = craftPickerQuery.trim().toLowerCase();
+    if (!query) return true;
+
+    return `${label} ${extra}`.toLowerCase().includes(query);
+}
+
+function resolveCraftPickTargetIndex() {
+    if (craftActiveSlotIndex != null && !currentCraftSlotState()[craftActiveSlotIndex]) {
+        return craftActiveSlotIndex;
+    }
+
+    return currentCraftSlotState().findIndex((slot) => !slot);
+}
+
+function craftSlotHintText() {
+    if (craftActiveSlotIndex != null) {
+        return `Ponta ${craftActiveSlotIndex + 1} selecionada — escolha um componente na biblioteca.`;
+    }
+
+    const nextIndex = resolveCraftPickTargetIndex();
+    if (nextIndex >= 0) {
+        return `Clique um componente para preencher a ponta ${nextIndex + 1}, ou selecione uma ponta vazia.`;
+    }
+
+    return 'Todas as pontas estao ocupadas. Remova um componente para trocar.';
+}
+
+function renderCraftPickerInventoryCells() {
+    const allocations = craftAllocationCounts();
+    const entries = collectCraftInventoryEntries().filter((entry) => craftPickerMatchesQuery(
+        itemLabel(entry.item),
+        `${entry.badge} ${entry.location}`
+    ));
+
+    if (!entries.length) {
+        return '<p class="inventory-craft-picker-empty">Nenhum item disponivel no inventario.</p>';
+    }
+
+    return entries.map((entry) => {
+        const payload = buildCraftDragPayload({ kind: 'item_instance', item: entry.item, public_id: entry.item.public_id });
+        const key = craftSourceKey(payload);
+        const eligibility = craftItemEligibility(entry.item);
+        const remaining = craftRemainingQuantity(payload);
+        const totalQty = Number(payload?.quantity_available || 1);
+        const allocated = allocations.get(key) || 0;
+        const canAdd = eligibility.ok && remaining > 0;
+        const assetUrl = itemAssetUrl(entry.item);
+        const label = itemLabel(entry.item);
+
+        return `
+            <button type="button"
+                class="craft-picker-cell${canAdd ? '' : ' is-blocked'}${allocated > 0 ? ' is-partial-used' : ''}"
+                data-craft-pick="1"
+                data-craft-pick-kind="item_instance"
+                data-craft-pick-key="${escapeHtml(key)}"
+                draggable="${canAdd ? 'true' : 'false'}"
+                aria-label="${escapeHtml(label)}"
+                title="${escapeHtml(eligibility.ok ? (totalQty > 1 ? `${remaining} de ${totalQty} disponiveis` : 'Disponivel') : eligibility.reason)}"
+                ${canAdd ? '' : 'disabled'}>
+                <span class="craft-picker-cell-art${assetUrl ? '' : ' is-placeholder'}">
+                    ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="" loading="lazy">` : `<span>${escapeHtml(resolveItemTypeMeta(entry.item).icon)}</span>`}
+                </span>
+                <span class="craft-picker-cell-name">${escapeHtml(label)}</span>
+                <span class="craft-picker-cell-meta">${escapeHtml(entry.badge)}${totalQty > 1 ? ` · ${remaining}/${totalQty}` : ''}</span>
+                ${!eligibility.ok ? `<span class="craft-picker-cell-lock">${escapeHtml(eligibility.reason)}</span>` : ''}
+            </button>
+        `;
+    }).join('');
+}
+
+function renderCraftPickerMaterialCells() {
+    const allocations = craftAllocationCounts();
+    const tabs = materialStash.tabs?.length
+        ? materialStash.tabs
+        : [
+            { code: 'metals', name: 'Metais', icon: '⚙' },
+            { code: 'gems', name: 'Gemas', icon: '💠' },
+            { code: 'essences', name: 'Essencias', icon: '✦' },
+            { code: 'fragments', name: 'Fragmentos', icon: '◆' },
+        ];
+    const stacks = (materialStash.stacks || [])
+        .filter((stack) => stack.stash_tab === craftPickerMaterialTab)
+        .filter((stack) => craftPickerMatchesQuery(stack.label || stack.family_name || '', stack.origin_name || ''));
+
+    const chips = tabs.map((tab) => `
+        <button type="button" class="inventory-craft-material-chip${craftPickerMaterialTab === tab.code ? ' is-active' : ''}" data-craft-material-tab="${escapeHtml(tab.code)}">
+            ${escapeHtml(tab.icon || '◆')} ${escapeHtml(tab.name)}
+        </button>
+    `).join('');
+
+    if (!stacks.length) {
+        return `
+            <div class="inventory-craft-material-chips">${chips}</div>
+            <p class="inventory-craft-picker-empty">Nenhum material nesta categoria.</p>
+        `;
+    }
+
+    const cells = stacks.map((stack) => {
+        const payload = buildCraftDragPayload({ kind: 'material_stack', ...stack, stack_key: materialStackKey(stack) });
+        const key = craftSourceKey(payload);
+        const remaining = craftRemainingQuantity(payload);
+        const totalQty = Number(stack.quantity || 0);
+        const allocated = allocations.get(key) || 0;
+        const canAdd = remaining > 0;
+        const assetUrl = materialAssetUrl(stack);
+
+        return `
+            <button type="button"
+                class="craft-picker-cell${canAdd ? '' : ' is-blocked'}${allocated > 0 ? ' is-partial-used' : ''}"
+                data-craft-pick="1"
+                data-craft-pick-kind="material_stack"
+                data-craft-pick-family="${escapeHtml(stack.family_code || '')}"
+                data-craft-pick-origin="${escapeHtml(stack.origin_code || '')}"
+                data-craft-pick-key="${escapeHtml(key)}"
+                draggable="${canAdd ? 'true' : 'false'}"
+                aria-label="${escapeHtml(stack.label || stack.family_name || 'Material')}"
+                title="${escapeHtml(`${remaining} de ${totalQty} disponiveis`)}"
+                ${canAdd ? '' : 'disabled'}>
+                <span class="craft-picker-cell-art${assetUrl ? '' : ' is-placeholder'}">
+                    ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="" loading="lazy">` : `<span>${escapeHtml(materialTabIcon(stack.stash_tab))}</span>`}
+                </span>
+                <span class="craft-picker-cell-name">${escapeHtml(stack.family_name || stack.label || 'Material')}</span>
+                <span class="craft-picker-cell-meta">${remaining}/${totalQty} livre</span>
+            </button>
+        `;
+    }).join('');
+
+    return `
+        <div class="inventory-craft-material-chips">${chips}</div>
+        <div class="inventory-craft-picker-grid-inner">${cells}</div>
+    `;
+}
+
+function renderCraftPickerLibrary() {
+    const inventoryCount = collectCraftInventoryEntries().length;
+    const materialCount = (materialStash.stacks || []).length;
+
+    return `
+        <div class="inventory-craft-library-head">
+            <div>
+                <h3>Biblioteca de componentes</h3>
+                <p>Escolha itens do inventario ou materiais sem sair desta tela. Itens equipados, colecionaveis, de evento e baus cheios ficam bloqueados.</p>
+            </div>
+            <input type="search" class="inventory-craft-picker-search" data-craft-picker-search placeholder="Buscar item ou material..." value="${escapeHtml(craftPickerQuery)}">
+            <div class="inventory-craft-picker-tabs" role="tablist" aria-label="Fontes de componentes">
+                <button type="button" class="inventory-craft-picker-tab${craftPickerTab === 'inventory' ? ' is-active' : ''}" data-craft-picker-tab="inventory" role="tab">
+                    Inventario <span>${inventoryCount}</span>
+                </button>
+                <button type="button" class="inventory-craft-picker-tab${craftPickerTab === 'materials' ? ' is-active' : ''}" data-craft-picker-tab="materials" role="tab">
+                    Materiais <span>${materialCount}</span>
+                </button>
+            </div>
+        </div>
+        <div class="inventory-craft-picker-grid" data-craft-picker-grid>
+            ${craftPickerTab === 'materials' ? renderCraftPickerMaterialCells() : `<div class="inventory-craft-picker-grid-inner">${renderCraftPickerInventoryCells()}</div>`}
+        </div>
+    `;
+}
+
+function buildCraftSlotsPayload() {
+    return currentCraftSlotState()
+        .map((slot, index) => (slot ? { index, source: slot.source } : null))
+        .filter(Boolean);
+}
+
+function renderCraftSlotContent(slot) {
+    if (!slot) {
+        return '<span class="craft-star-slot-empty" aria-hidden="true">+</span>';
+    }
+
+    const assetUrl = slot.asset_url || '';
+    const label = slot.label || 'Componente';
+    const consumeQty = Number(slot.source?.quantity || 1);
+
+    return `
+        <div class="inventory-item is-tiny is-compact is-craft-source${assetUrl ? ' has-art' : ''}" aria-label="${escapeHtml(label)}">
+            ${assetUrl ? `<img class="inventory-item-art" src="${escapeHtml(assetUrl)}" alt="" loading="lazy" onerror="this.remove();">` : '<span class="inventory-item-fallback">◆</span>'}
+            <span class="inventory-item-name">${escapeHtml(label)}</span>
+            ${consumeQty > 1 ? `<span class="inventory-item-quantity">x${consumeQty.toLocaleString('pt-BR')}</span>` : ''}
+        </div>
+        <button type="button" class="craft-star-slot-clear" data-craft-clear aria-label="Remover componente" title="Remover">×</button>
+    `;
+}
+
+function renderCraftStar() {
+    const meta = craftWorkspaceMeta();
+    const slots = currentCraftSlotState();
+    const filledCount = slots.filter(Boolean).length;
+    const glowLevel = craftPreview?.synergy_level || (filledCount >= 5 ? 3 : filledCount >= 3 ? 2 : filledCount >= 1 ? 1 : 0);
+    const auraColor = craftPreview?.aura_color || meta.aura_color;
+
+    return `
+        <div class="craft-star-stage" data-craft-stage style="--craft-aura:${escapeHtml(auraColor)};">
+            <svg class="craft-star-links" data-craft-links aria-hidden="true"></svg>
+            <div class="craft-star-core is-glow-${glowLevel}">
+                <p class="inventory-kicker">${escapeHtml(meta.name)}</p>
+                <strong data-craft-output-name>${escapeHtml(craftPreview?.predicted_output?.name || 'Aguardando componentes')}</strong>
+                <small data-craft-output-meta>${escapeHtml(craftPreview?.synergy_label || 'Inerte')} · ${filledCount}/${CRAFT_SLOT_COUNT} pontas</small>
+            </div>
+            ${Array.from({ length: CRAFT_SLOT_COUNT }, (_, index) => {
+                const pos = craftStarPointStyle(index);
+                const hasItem = Boolean(slots[index]);
+                const isSelected = craftActiveSlotIndex === index;
+                return `
+                    <button type="button"
+                        class="craft-star-slot is-point-${index}${hasItem ? ' has-item' : ''}${isSelected ? ' is-selected' : ''}${glowLevel > 0 && hasItem ? ` is-set-glow-${glowLevel}` : ''}"
+                        data-craft-slot="${index}"
+                        data-craft-drop="1"
+                        style="left:${pos.left};top:${pos.top};">
+                        <span class="craft-star-slot-ring"></span>
+                        <span class="craft-star-slot-content">${renderCraftSlotContent(slots[index])}</span>
+                    </button>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function craftSlotElement(index) {
+    return craftPanelRoot?.querySelector(`[data-craft-slot="${index}"]`) || null;
+}
+
+function craftSlotCenterInStage(element, stage) {
+    if (!element || !stage || !stage.contains(element)) return null;
+
+    const elementRect = element.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height) return null;
+
+    const scaleX = stage.offsetWidth / stageRect.width;
+    const scaleY = stage.offsetHeight / stageRect.height;
+
+    return {
+        x: ((elementRect.left - stageRect.left) + (elementRect.width / 2)) * scaleX,
+        y: ((elementRect.top - stageRect.top) + (elementRect.height / 2)) * scaleY,
+    };
+}
+
+function renderCraftLinks() {
+    const stage = craftPanelRoot?.querySelector('[data-craft-stage]');
+    const svg = craftPanelRoot?.querySelector('[data-craft-links]');
+    if (!stage || !svg) return;
+
+    svg.replaceChildren();
+    svg.setAttribute('viewBox', `0 0 ${stage.offsetWidth} ${stage.offsetHeight}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+    const connections = Array.isArray(craftPreview?.connections) ? craftPreview.connections : [];
+    const auraColor = craftPreview?.aura_color || craftWorkspaceMeta().aura_color;
+    const glowLevel = Number(craftPreview?.synergy_level || 0);
+
+    for (const connection of connections) {
+        const from = craftSlotElement(Number(connection.from));
+        const to = craftSlotElement(Number(connection.to));
+        const p1 = from ? craftSlotCenterInStage(from, stage) : null;
+        const p2 = to ? craftSlotCenterInStage(to, stage) : null;
+        if (!p1 || !p2) continue;
+
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', String(p1.x));
+        line.setAttribute('y1', String(p1.y));
+        line.setAttribute('x2', String(p2.x));
+        line.setAttribute('y2', String(p2.y));
+        line.setAttribute('stroke', auraColor);
+        line.setAttribute('class', `craft-star-link-line${glowLevel > 0 ? ` is-set-glow-${glowLevel}` : ''}`);
+        if (glowLevel > 0) {
+            line.setAttribute('stroke-width', String(1.5 + glowLevel));
+            line.setAttribute('opacity', String(0.55 + (glowLevel * 0.15)));
+        }
+        svg.appendChild(line);
+    }
+}
+
+function renderCraftPanel() {
+    if (!craftPanelRoot) return;
+
+    const meta = craftWorkspaceMeta();
+    const output = craftPreview?.predicted_output || {};
+    const canCraft = Boolean(craftPreview?.can_craft);
+    const recipeMatch = craftPreview?.recipe_match || {};
+    const compatibilityLabel = recipeMatch.compatibility_label || 'Insuficiente';
+    const compatibilityClass = craftCompatibilityClass(compatibilityLabel);
+    const goldCost = Number(craftPreview?.gold_cost || 0);
+    const goldBalance = Number(craftPreview?.gold_balance ?? walletBalance('gold'));
+    const canAfford = craftPreview?.can_afford !== false;
+    const recipeName = recipeMatch.best_match?.recipe?.name || recipeMatch.recipe_code || '';
+    const possibleOutputs = Array.isArray(output.possible_outputs) ? output.possible_outputs : [];
+    const outputsHint = possibleOutputs.length > 1
+        ? `Resultados possiveis: ${possibleOutputs.map((entry) => entry.name).filter(Boolean).join(', ')}`
+        : '';
+
+    craftPanelRoot.innerHTML = `
+        <div class="inventory-craft-shell">
+            <header class="inventory-craft-header">
+                <div>
+                    <p class="inventory-kicker">Transmutacao</p>
+                    <h2>Workspace de Criacao</h2>
+                    <p class="inventory-craft-lead">${escapeHtml(meta.subtitle || '')}</p>
+                </div>
+                <div class="inventory-craft-header-actions">
+                    <button type="button" class="inventory-button" data-craft-clear-all>Limpar altar</button>
+                    <button type="button" class="inventory-drawer-close" data-craft-close aria-label="Fechar criacao">×</button>
+                </div>
+            </header>
+            <div class="inventory-craft-tabs" data-craft-tabs>
+                <button type="button" class="inventory-craft-tab${craftWorkspace === 'forge' ? ' is-active' : ''}" data-craft-workspace="forge">⚒ Forja</button>
+                <button type="button" class="inventory-craft-tab${craftWorkspace === 'alchemy' ? ' is-active' : ''}" data-craft-workspace="alchemy">✦ Alquimia</button>
+            </div>
+            <div class="inventory-craft-workspace">
+                <section class="inventory-craft-lane inventory-craft-lane--altar">
+                    <div class="inventory-craft-lane-head">
+                        <h3>Altar</h3>
+                        <p class="inventory-craft-slot-hint">${escapeHtml(craftSlotHintText())}</p>
+                    </div>
+                    <div class="inventory-craft-stage-panel">
+                        ${renderCraftStar()}
+                    </div>
+                    <div class="inventory-craft-result-bar">
+                        <div class="inventory-craft-preview-card rarity-${escapeHtml(output.quality_bucket || 'common')}">
+                            <div class="inventory-craft-preview-top">
+                                <span class="inventory-craft-preview-label">Resultado previsto</span>
+                                <span class="inventory-craft-compat ${compatibilityClass}">${escapeHtml(compatibilityLabel)}</span>
+                            </div>
+                            <strong>${escapeHtml(output.name || 'Indefinido')}</strong>
+                            <small>${escapeHtml(output.rarity_label || output.quality_bucket || '—')} · ${escapeHtml(craftPreview?.synergy_label || 'Inerte')}${recipeName ? ` · ${escapeHtml(recipeName)}` : ''}</small>
+                            <p>${escapeHtml(output.description || craftPreview?.reason || meta.description || '')}</p>
+                            ${outputsHint ? `<p class="inventory-craft-output-hint">${escapeHtml(outputsHint)}</p>` : ''}
+                            ${recipeMatch.guaranteed_success ? '<p class="inventory-craft-guarantee">Forja garantida — esta receita sempre produz um item.</p>' : ''}
+                            <div class="inventory-craft-cost-row">
+                                <span>Custo</span>
+                                <strong class="${canAfford ? '' : 'is-insufficient'}">${goldCost.toLocaleString('pt-BR')} G</strong>
+                                <small>Saldo: ${goldBalance.toLocaleString('pt-BR')} G</small>
+                            </div>
+                        </div>
+                        <button type="button" class="inventory-button inventory-craft-execute" data-craft-execute ${canCraft ? '' : 'disabled'}>
+                            ${craftWorkspace === 'forge' ? 'Forjar item' : 'Transmutar'}${goldCost > 0 ? ` · ${goldCost.toLocaleString('pt-BR')} G` : ''}
+                        </button>
+                    </div>
+                </section>
+                <section class="inventory-craft-lane inventory-craft-lane--library">
+                    ${renderCraftPickerLibrary()}
+                </section>
+            </div>
+        </div>
+    `;
+
+    window.requestAnimationFrame(() => {
+        renderCraftLinks();
+        window.requestAnimationFrame(renderCraftLinks);
+    });
+    bindCraftPanelInteractions();
+}
+
+function applyCraftPickPayload(payload) {
+    if (!payload) return false;
+
+    if (!craftCanAddPayload(payload)) {
+        toast('Quantidade disponivel esgotada para este componente.', 'info', 2600);
+        return false;
+    }
+
+    const index = resolveCraftPickTargetIndex();
+    if (index < 0) {
+        toast('Todas as pontas da estrela estao ocupadas.', 'info', 2800);
+        return false;
+    }
+
+    const ok = assignCraftSlot(index, payload);
+    if (ok) {
+        const nextEmpty = currentCraftSlotState().findIndex((slot) => !slot);
+        craftActiveSlotIndex = nextEmpty >= 0 ? nextEmpty : null;
+        renderCraftPanel();
+    }
+
+    return ok;
+}
+
+function resolveCraftPickPayloadFromButton(button) {
+    if (!(button instanceof Element)) return null;
+
+    const kind = button.getAttribute('data-craft-pick-kind') || '';
+    if (kind === 'material_stack') {
+        const familyCode = button.getAttribute('data-craft-pick-family') || '';
+        const originCode = button.getAttribute('data-craft-pick-origin') || '';
+        const stack = (materialStash.stacks || []).find((entry) => entry.family_code === familyCode && entry.origin_code === originCode)
+            || materialStackIndex.get(`${familyCode}::${originCode}`);
+        return buildCraftDragPayload({ kind: 'material_stack', ...stack, family_code: familyCode, origin_code: originCode });
+    }
+
+    if (kind === 'item_instance') {
+        const key = button.getAttribute('data-craft-pick-key') || '';
+        const publicId = key.startsWith('item:') ? key.slice(5) : '';
+        const entry = collectCraftInventoryEntries().find((candidate) => candidate.item?.public_id === publicId);
+        if (!entry?.item) return null;
+        return buildCraftDragPayload({ kind: 'item_instance', item: entry.item, public_id: entry.item.public_id });
+    }
+
+    return null;
+}
+
+function assignCraftSlot(index, payload, options = {}) {
+    if (index < 0 || index >= CRAFT_SLOT_COUNT || !payload) return false;
+
+    const eligibility = payload.kind === 'item_instance' ? craftItemEligibility(payload.item) : { ok: true };
+    if (!eligibility.ok) {
+        if (!options.silent) toast(eligibility.reason || 'Item bloqueado para crafting.', 'info', 2600);
+        return false;
+    }
+
+    const slots = currentCraftSlotState();
+    const existingKey = slots[index] ? craftSourceKey(slots[index].source) : '';
+    const key = craftSourceKey(payload);
+    const remaining = craftRemainingQuantity(payload) + (existingKey === key ? Number(slots[index]?.source?.quantity || 1) : 0);
+
+    if (remaining <= 0) {
+        if (!options.silent) toast('Quantidade disponivel esgotada para este componente.', 'info', 2600);
+        return false;
+    }
+
+    slots[index] = {
+        source: {
+            kind: payload.kind,
+            public_id: payload.public_id || null,
+            family_code: payload.family_code || null,
+            origin_code: payload.origin_code || null,
+            quantity: 1,
+        },
+        label: payload.label || 'Componente',
+        asset_url: payload.asset_url || '',
+        quantity_available: Number(payload.quantity_available || 1),
+        item: payload.item || null,
+    };
+
+    renderCraftPanel();
+    refreshCraftPreview();
+    return true;
+}
+
+function clearCraftSlot(index) {
+    const slots = currentCraftSlotState();
+    if (!slots[index]) return;
+    slots[index] = null;
+    craftActiveSlotIndex = index;
+    renderCraftPanel();
+    refreshCraftPreview();
+}
+
+function clearCraftWorkspace() {
+    craftSlots[craftWorkspace] = Array.from({ length: CRAFT_SLOT_COUNT }, () => null);
+    craftPreview = null;
+    craftActiveSlotIndex = 0;
+    renderCraftPanel();
+}
+
+async function loadCraftPickerStash() {
+    try {
+        const response = await apiFetch('/api/inventory/materials');
+        materialStash = response.data || { tabs: [], stacks: [], grid: { columns: 12, cell_px: 52 } };
+        materialStackIndex = new Map((materialStash.stacks || []).map((stack) => [materialStackKey(stack), stack]));
+    } catch {
+        materialStash = { tabs: [], stacks: [], grid: { columns: 12, cell_px: 52 } };
+        materialStackIndex = new Map();
+    }
+}
+
+async function refreshCraftPreview() {
+    if (!craftPanelOpen || craftPreviewLoading) return;
+
+    const payload = buildCraftSlotsPayload();
+    if (!payload.length) {
+        craftPreview = {
+            workspace: craftWorkspace,
+            filled_slots: 0,
+            synergy_level: 0,
+            synergy_label: 'Inerte',
+            aura_color: craftWorkspaceMeta().aura_color,
+            connections: [],
+            can_craft: false,
+            reason: 'Preencha pelo menos 2 pontas da estrela.',
+            predicted_output: {
+                name: 'Aguardando componentes',
+                quality_bucket: 'common',
+                description: 'Arraste qualquer item, material ou pet para montar a receita.',
+            },
+        };
+        renderCraftPanel();
+        return;
+    }
+
+    craftPreviewLoading = true;
+    try {
+        const response = await apiFetch('/api/inventory/crafting/preview', {
+            method: 'POST',
+            body: {
+                workspace: craftWorkspace,
+                slots: payload,
+            },
+        });
+        craftPreview = response.data || null;
+    } catch (error) {
+        craftPreview = null;
+        handleError(error, 'Nao foi possivel prever o resultado.');
+    } finally {
+        craftPreviewLoading = false;
+        renderCraftPanel();
+    }
+}
+
+async function executeCraft() {
+    if (actionInFlight || !craftPreview?.can_craft) return;
+
+    const payload = buildCraftSlotsPayload();
+    if (payload.length < 2) {
+        toast('Preencha pelo menos 2 pontas da estrela.', 'error', 2800);
+        return;
+    }
+
+    const outputName = craftPreview?.predicted_output?.name || 'item';
+    const goldCost = Number(craftPreview?.gold_cost || 0);
+    const confirmed = await confirmInventoryAction({
+        title: craftWorkspace === 'forge' ? 'Confirmar forja' : 'Confirmar alquimia',
+        bodyHtml: `<p>Consumir os componentes e criar <strong>${escapeHtml(outputName)}</strong>?</p>
+            <p>Os itens e materiais usados serao removidos do inventario.${goldCost > 0 ? ` Custo: <strong>${goldCost.toLocaleString('pt-BR')} G</strong>.` : ''}</p>`,
+        confirmLabel: craftWorkspace === 'forge' ? 'Forjar' : 'Transmutar',
+        tone: 'warning',
+    });
+    if (!confirmed) return;
+
+    actionInFlight = true;
+    try {
+        setStatus('Transmutando...');
+        const response = await apiFetch('/api/inventory/crafting/execute', {
+            method: 'POST',
+            body: {
+                workspace: craftWorkspace,
+                slots: payload,
+            },
+        });
+        const granted = response.data?.granted_item?.item_public_id || response.data?.granted_item?.public_id;
+        toast(`Criacao concluida${granted ? `: ${outputName}` : '.'}`, 'success', 4200);
+
+        const discovery = response.data?.discovery;
+        if (discovery?.is_first_on_server && discovery?.can_share) {
+            await promptCraftBlueprintDiscovery(discovery);
+        }
+
+        clearCraftWorkspace();
+        setStatus('Sincronizado');
+        await loadInventory();
+        await loadCraftPickerStash();
+        if (craftPanelOpen) renderCraftPanel();
+    } catch (error) {
+        handleError(error, 'Nao foi possivel concluir a criacao.');
+    } finally {
+        actionInFlight = false;
+    }
+}
+
+async function promptCraftBlueprintDiscovery(discovery) {
+    const recipeName = discovery.recipe_name || discovery.recipe_code || 'Receita';
+    const share = await confirmInventoryAction({
+        title: 'Primeira descoberta no servidor!',
+        bodyHtml: `<p>Voce foi o primeiro jogador a criar <strong>${escapeHtml(recipeName)}</strong>.</p>
+            <p>Deseja <strong>compartilhar</strong> esta blueprint com todos os jogadores, ou manter apenas para voce?</p>`,
+        confirmLabel: 'Compartilhar com todos',
+        cancelLabel: 'Guardar para mim',
+        tone: 'success',
+    });
+
+    if (!share) return;
+
+    try {
+        await apiFetch('/api/inventory/crafting/recipes/share', {
+            method: 'POST',
+            body: { recipe_code: discovery.recipe_code },
+        });
+        toast('Blueprint compartilhada com todo o servidor!', 'success', 4200);
+    } catch (error) {
+        handleError(error, 'Nao foi possivel compartilhar a receita.');
+    }
+}
+
+function findCraftSlotUnderPointer(clientX, clientY) {
+    if (!craftPanelOpen || clientX == null || clientY == null) return null;
+    const elements = document.elementsFromPoint(clientX, clientY);
+    const hit = elements.find((node) => node instanceof Element && node.closest('[data-craft-drop]'));
+    return hit instanceof Element ? hit.closest('[data-craft-drop]') : null;
+}
+
+function applyCraftDropPayload(slotElement, payload) {
+    if (!slotElement || !payload) return false;
+    const index = Number(slotElement.getAttribute('data-craft-slot'));
+    if (!Number.isInteger(index)) return false;
+    return assignCraftSlot(index, payload);
+}
+
+async function tryAssignInventoryDragToCraftSlot(event) {
+    if (!craftPanelOpen || !activeDrag) return false;
+
+    const coords = dragPointerCoords(event);
+    const slotElement = findCraftSlotUnderPointer(coords?.clientX, coords?.clientY);
+    if (!slotElement) return false;
+
+    const dragged = findDraggedWidget();
+    const itemPublicId = dragged?.node?.id || activeDrag.itemPublicId;
+    const indexed = itemIndex.get(itemPublicId);
+    const item = indexed?.item;
+    if (!item) return false;
+
+    const eligibility = craftItemEligibility(item);
+    if (!eligibility.ok) {
+        toast(eligibility.reason || 'Item bloqueado para crafting.', 'info', 2600);
+        return false;
+    }
+
+    const payload = buildCraftDragPayload({ kind: 'item_instance', item, public_id: item.public_id });
+    if (!applyCraftDropPayload(slotElement, payload)) return false;
+
+    revertItem(itemPublicId);
+    activeDrag.handled = true;
+    clearActiveDrag();
+    return true;
+}
+
+async function loadCraftWorkspaces() {
+    try {
+        const response = await apiFetch('/api/inventory/crafting/workspaces');
+        craftWorkspaces = response.data?.workspaces || [];
+    } catch {
+        craftWorkspaces = [
+            { code: 'forge', name: 'Forja', subtitle: 'Cria itens base comuns', description: 'Combina materias-primas e componentes para forjar equipamentos comuns.', aura_color: '#f59e0b' },
+            { code: 'alchemy', name: 'Alquimia', subtitle: 'Encanta e refina', description: 'Funde essencias, gemas e itens especiais para criar encantamentos e colecionaveis.', aura_color: '#8b5cf6' },
+        ];
+    }
+}
+
+function openCraftPanel() {
+    marketPanelOpen = false;
+    materialsPanelOpen = false;
+    craftPanelOpen = true;
+    craftActiveSlotIndex = craftActiveSlotIndex ?? resolveCraftPickTargetIndex();
+    if (craftActiveSlotIndex < 0) craftActiveSlotIndex = 0;
+    syncDrawerUi();
+    Promise.all([loadCraftWorkspaces(), loadCraftPickerStash()]).then(() => {
+        renderCraftPanel();
+        refreshCraftPreview();
+    });
+}
+
+function closeCraftPanel() {
+    craftPanelOpen = false;
+    craftActiveSlotIndex = null;
+    syncDrawerUi();
+}
+
+function toggleCraftPanel() {
+    if (craftPanelOpen) closeCraftPanel();
+    else openCraftPanel();
+}
+
+let craftControlsInitialized = false;
+
+function bindCraftPanelInteractions() {
+    if (!craftPanelRoot) return;
+
+    craftPanelRoot.querySelector('[data-craft-close]')?.addEventListener('click', closeCraftPanel);
+    craftPanelRoot.querySelector('[data-craft-clear-all]')?.addEventListener('click', clearCraftWorkspace);
+    craftPanelRoot.querySelector('[data-craft-execute]')?.addEventListener('click', executeCraft);
+
+    craftPanelRoot.querySelectorAll('[data-craft-workspace]').forEach((button) => {
+        button.addEventListener('click', () => {
+            craftWorkspace = button.getAttribute('data-craft-workspace') || 'forge';
+            craftPreview = null;
+            craftActiveSlotIndex = resolveCraftPickTargetIndex();
+            if (craftActiveSlotIndex < 0) craftActiveSlotIndex = 0;
+            renderCraftPanel();
+            refreshCraftPreview();
+        });
+    });
+
+    craftPanelRoot.querySelectorAll('[data-craft-picker-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+            craftPickerTab = button.getAttribute('data-craft-picker-tab') || 'inventory';
+            renderCraftPanel();
+        });
+    });
+
+    craftPanelRoot.querySelectorAll('[data-craft-material-tab]').forEach((button) => {
+        button.addEventListener('click', () => {
+            craftPickerMaterialTab = button.getAttribute('data-craft-material-tab') || 'metals';
+            renderCraftPanel();
+        });
+    });
+
+    const searchInput = craftPanelRoot.querySelector('[data-craft-picker-search]');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            craftPickerQuery = searchInput.value || '';
+            renderCraftPanel();
+            const nextSearch = craftPanelRoot.querySelector('[data-craft-picker-search]');
+            if (nextSearch instanceof HTMLInputElement) {
+                nextSearch.focus();
+                const cursor = nextSearch.value.length;
+                nextSearch.setSelectionRange(cursor, cursor);
+            }
+        });
+    }
+
+    craftPanelRoot.querySelectorAll('[data-craft-clear]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const slot = button.closest('[data-craft-slot]');
+            clearCraftSlot(Number(slot?.getAttribute('data-craft-slot')));
+        });
+    });
+
+    craftPanelRoot.querySelectorAll('[data-craft-slot]').forEach((slot) => {
+        slot.addEventListener('click', (event) => {
+            if (event.target.closest('[data-craft-clear]')) return;
+            const index = Number(slot.getAttribute('data-craft-slot'));
+            if (!Number.isInteger(index)) return;
+            craftActiveSlotIndex = index;
+            renderCraftPanel();
+        });
+    });
+
+    craftPanelRoot.querySelectorAll('[data-craft-pick]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const payload = resolveCraftPickPayloadFromButton(button);
+            applyCraftPickPayload(payload);
+        });
+
+        button.addEventListener('dragstart', (event) => {
+            const payload = resolveCraftPickPayloadFromButton(button);
+            if (!payload || !event.dataTransfer) return;
+            event.dataTransfer.effectAllowed = 'copy';
+            event.dataTransfer.setData(CRAFT_DRAG_MIME, JSON.stringify(payload));
+            event.dataTransfer.setData('text/plain', payload.label || 'Componente');
+            button.classList.add('is-craft-dragging');
+        });
+
+        button.addEventListener('dragend', () => {
+            button.classList.remove('is-craft-dragging');
+        });
+    });
+
+    craftPanelRoot.querySelectorAll('[data-craft-drop]').forEach((slot) => {
+        slot.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+            slot.classList.add('is-drop-hover');
+        });
+        slot.addEventListener('dragleave', () => slot.classList.remove('is-drop-hover'));
+        slot.addEventListener('drop', (event) => {
+            event.preventDefault();
+            slot.classList.remove('is-drop-hover');
+            const index = Number(slot.getAttribute('data-craft-slot'));
+            const payload = parseCraftDragPayload(event.dataTransfer);
+            if (!payload || !Number.isInteger(index)) return;
+            craftActiveSlotIndex = index;
+            assignCraftSlot(index, payload);
+            const nextEmpty = currentCraftSlotState().findIndex((entry) => !entry);
+            craftActiveSlotIndex = nextEmpty >= 0 ? nextEmpty : null;
+            renderCraftPanel();
+        });
+    });
+}
+
+function initCraftControls() {
+    if (craftControlsInitialized) return;
+    craftControlsInitialized = true;
+
+    document.querySelectorAll('[data-craft-open]').forEach((button) => {
+        button.addEventListener('click', () => toggleCraftPanel());
+    });
+
+    craftPanelRoot?.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest('[data-craft-close]')) {
+            closeCraftPanel();
+            return;
+        }
+        if (event.target === craftPanelRoot) {
+            closeCraftPanel();
+        }
+    });
+}
+
+function renderInvestigationSparkline(history = []) {
+    if (!history.length) return '<span class="inventory-investigate-sparkline is-empty">Sem historico recente</span>';
+    const values = history.map((entry) => Number(entry.market_value || 0));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    const bars = values.map((value) => {
+        const ratio = max === min ? 0.5 : (value - min) / (max - min);
+        return chars[Math.min(chars.length - 1, Math.floor(ratio * (chars.length - 1)))];
+    }).join('');
+
+    return `<span class="inventory-investigate-sparkline" title="Ultimos ${history.length} registros">${escapeHtml(bars)}</span>`;
+}
+
+function renderInvestigationModal(report, item) {
+    const data = report || {};
+    const inspectedItem = data.item || item || {};
+    const market = data.market || {};
+    const dismantle = data.dismantle || {};
+    const history = data.history || [];
+    const crafting = data.crafting || [];
+    const supply = market.supply || {};
+    const upgradeLevel = upgradeLevelFromItem(inspectedItem);
+    const typeMeta = resolveItemTypeMeta(inspectedItem);
+    const assetUrl = itemAssetUrl(inspectedItem);
+    const quality = inspectedItem.quality_bucket || 'common';
+    const stats = (inspectedItem.properties || []).filter((prop) => !['upgrade_level', 'upgrade_success_rate', 'socket_count'].includes(String(prop.code || ''))).slice(0, 6);
+    const affixes = (inspectedItem.affixes || []).slice(0, 6);
+    const sockets = inspectedItem.sockets || [];
+    const dismantleLines = (dismantle.materials || []).map((entry) => `${entry.label} x${entry.quantity}`).join(' · ') || 'Nenhum material previsto';
+    const historyLines = history.length
+        ? history.map((entry) => `<li>${escapeHtml(entry.label || '-')}</li>`).join('')
+        : '<li>Sem eventos registrados.</li>';
+
+    return `
+        <div class="inventory-investigate">
+            <header class="inventory-investigate-hero rarity-${escapeHtml(quality)}">
+                <div class="inventory-investigate-art${assetUrl ? '' : ' is-placeholder'}">
+                    ${assetUrl ? `<img src="${escapeHtml(assetUrl)}" alt="">` : `<span>${escapeHtml(typeMeta.icon)}</span>`}
+                </div>
+                <div>
+                    <h3>${escapeHtml(itemLabel(inspectedItem))}${upgradeLevel > 0 ? ` <small>+${upgradeLevel}</small>` : ''}</h3>
+                    <p>${escapeHtml(String(quality))} · Poder ${Number(data.power || 0).toLocaleString('pt-BR')} · ${escapeHtml(typeMeta.label)}</p>
+                </div>
+            </header>
+            ${data.description ? `<section class="inventory-investigate-section"><h4>Descricao</h4><p>${escapeHtml(data.description)}</p></section>` : ''}
+            <section class="inventory-investigate-grid">
+                <div><h4>Stats</h4><ul>${stats.map((stat) => `<li>${escapeHtml(stat.name)}: <strong>${escapeHtml(String(stat.value ?? '-'))}</strong></li>`).join('') || '<li>Sem stats base.</li>'}</ul></div>
+                <div><h4>Affixes</h4><ul>${affixes.map((affix) => `<li>${escapeHtml(affix.name)}: <strong>+${escapeHtml(String(affix.value ?? '-'))}</strong></li>`).join('') || '<li>Sem affixes.</li>'}</ul></div>
+                <div><h4>Sockets</h4><ul>${sockets.map((socket) => `<li>${socket.gem ? `● ${escapeHtml(socket.gem.name || 'Gema')}` : '○ Vazio'}</li>`).join('') || '<li>Sem sockets.</li>'}</ul></div>
+            </section>
+            <section class="inventory-investigate-section">
+                <h4>Mercado</h4>
+                <p>${Number(market.npc_value || 0).toLocaleString('pt-BR')} G (NPC) / ${Number(market.suggested_premium || 0).toLocaleString('pt-BR')} 💎 (P2P)</p>
+                <p>Oferta: ${Number(supply.similar_listings || 0)} similares · Demanda: ${escapeHtml(supply.demand_label || 'Estavel')}</p>
+                ${renderInvestigationSparkline(market.price_history || [])}
+            </section>
+            <section class="inventory-investigate-section">
+                <h4>Desmanche</h4>
+                <p>${escapeHtml(dismantleLines)}</p>
+                ${dismantle.can_dismantle ? `<button type="button" class="inventory-button inventory-investigate-dismantle" data-investigate-dismantle="${escapeHtml(inspectedItem.public_id)}">Desmanchar item</button>` : '<small>Item nao pode ser desmanchado.</small>'}
+            </section>
+            ${crafting.length ? `<section class="inventory-investigate-section"><h4>Crafting</h4><ul>${crafting.map((entry) => `<li><strong>${escapeHtml(entry.label)}:</strong> ${escapeHtml(entry.description || '')}</li>`).join('')}</ul></section>` : ''}
+            <section class="inventory-investigate-section">
+                <h4>Historico</h4>
+                <ul>${historyLines}</ul>
+            </section>
+        </div>
+    `;
+}
+
+async function openInvestigationModal(item) {
+    if (!item?.public_id || actionInFlight || loading) return;
+
+    actionInFlight = true;
+    try {
+        setStatus('Investigando item...');
+        const response = await apiFetch(`/api/inventory/items/${encodeURIComponent(item.public_id)}/investigate`);
+        const report = response.data || {};
+        const content = document.createElement('div');
+        content.innerHTML = renderInvestigationModal(report, item);
+
+        const { close, element } = openModal(content.firstElementChild || content, { closeOnBackdrop: true });
+        element.querySelector('[data-investigate-dismantle]')?.addEventListener('click', async () => {
+            close();
+            await executeItemAction(item, {
+                code: 'DISMANTLE',
+                name: 'Desmanchar',
+                requires_confirmation: true,
+                is_destructive: true,
+            });
+        });
+
+        setStatus('Sincronizado');
+    } catch (error) {
+        handleError(error, 'Nao foi possivel investigar o item.');
+    } finally {
+        actionInFlight = false;
+    }
+}
+
+async function buyMarketListing(listingPublicId) {
+    if (actionInFlight || loading || !listingPublicId) return;
+
+    const listing = marketListings.find((entry) => entry.listing_public_id === listingPublicId);
+    if (!listing) return;
+
+    const itemName = listing.item?.definition_name || listing.item?.definition_code || 'Item';
+    const price = Number(listing.price_premium || 0);
+    const confirmed = await confirmInventoryAction({
+        title: 'Comprar no mercado',
+        bodyHtml: `<p>Comprar <strong>${escapeHtml(itemName)}</strong> por <strong>${price.toLocaleString('pt-BR')} 💎</strong>?</p>
+            <p>O item sera enviado para o container de entregas do mercado.</p>`,
+        confirmLabel: 'Comprar',
+        tone: 'warning',
+    });
+    if (!confirmed) return;
+
+    actionInFlight = true;
+    try {
+        setStatus('Comprando item...');
+        await apiFetch(`/api/market/listings/${encodeURIComponent(listingPublicId)}/buy`, {
+            method: 'POST',
+            body: {},
+        });
+        toast('Compra concluida. Verifique as entregas do mercado.', 'success', 3600);
+        setStatus('Sincronizado');
+        await loadInventory();
+        await loadMarketListings();
+    } catch (error) {
+        handleError(error, 'Nao foi possivel concluir a compra.');
+    } finally {
+        actionInFlight = false;
+    }
+}
+
+function openStatsDrawer() {
+    statsDrawerOpen = true;
+    focusedDrawer = 'stats';
+    persistDrawerState();
+    syncDrawerUi();
+    renderCharacterStats(lastCharacterStats, currentSetBonuses, playerPower, statsDrawerPanel);
+}
+
+function closeStatsDrawer() {
+    statsDrawerOpen = false;
+    if (focusedDrawer === 'stats') {
+        focusedDrawer = leftDrawerOpen ? 'left' : (rightDrawerOpen ? 'right' : 'right');
+    }
+    persistDrawerState();
+    syncDrawerUi();
+}
+
+function toggleStatsDrawer() {
+    if (statsDrawerOpen) closeStatsDrawer();
+    else openStatsDrawer();
+}
+
+function setLeftDrawerTab(tab) {
+    leftDrawerTab = tab === 'stats' ? 'stats' : 'equipment';
+    persistDrawerState();
+    equipmentRoot?.querySelectorAll('[data-left-tab]').forEach((button) => {
+        button.classList.toggle('is-active', button.dataset.leftTab === leftDrawerTab);
+    });
+    equipmentRoot?.querySelectorAll('[data-left-tab-panel]').forEach((panel) => {
+        const active = panel.dataset.leftTabPanel === leftDrawerTab;
+        panel.hidden = !active;
+        panel.classList.toggle('is-active', active);
+    });
+    if (leftDrawerTab === 'stats') {
+        renderCharacterStats(lastCharacterStats, currentSetBonuses, playerPower, equipmentRoot?.querySelector('[data-character-stats-panel]'));
+    }
+}
+
+function openLeftDrawer() {
+    leftDrawerOpen = true;
+    focusedDrawer = 'left';
+    persistDrawerState();
+    syncDrawerUi();
+}
+
+function openRightDrawer() {
+    rightDrawerOpen = true;
+    focusedDrawer = 'right';
+    persistDrawerState();
+    syncDrawerUi();
+}
+
+function closeLeftDrawer() {
+    leftDrawerOpen = false;
+    if (focusedDrawer === 'left') focusedDrawer = rightDrawerOpen ? 'right' : 'right';
+    persistDrawerState();
+    syncDrawerUi();
+}
+
+function closeRightDrawer() {
+    rightDrawerOpen = false;
+    if (focusedDrawer === 'right') focusedDrawer = leftDrawerOpen ? 'left' : 'right';
+    persistDrawerState();
+    syncDrawerUi();
+}
+
+function toggleLeftDrawer() {
+    if (leftDrawerOpen) {
+        closeLeftDrawer();
+    } else {
+        openLeftDrawer();
+    }
+}
+
+function toggleRightDrawer() {
+    if (rightDrawerOpen) {
+        closeRightDrawer();
+    } else {
+        openRightDrawer();
+    }
+}
+
+function alternateDrawerFocus() {
+    if (!leftDrawerOpen && !rightDrawerOpen) {
+        openRightDrawer();
+        return;
+    }
+    if (leftDrawerOpen && rightDrawerOpen) {
+        focusedDrawer = focusedDrawer === 'left' ? 'right' : 'left';
+        persistDrawerState();
+        syncDrawerUi();
+        return;
+    }
+    if (leftDrawerOpen) {
+        openRightDrawer();
+    } else {
+        openLeftDrawer();
+    }
+}
+
+function closeActiveDrawer() {
+    if (craftPanelOpen) {
+        closeCraftPanel();
+        return;
+    }
+    if (materialsPanelOpen) {
+        closeMaterialsPanel();
+        return;
+    }
+    if (marketPanelOpen) {
+        closeMarketPanel();
+        return;
+    }
+    if (statsDrawerOpen && (focusedDrawer === 'stats' || !(leftDrawerOpen || rightDrawerOpen))) {
+        closeStatsDrawer();
+        return;
+    }
+    if (leftDrawerOpen && rightDrawerOpen) {
+        if (focusedDrawer === 'left') closeLeftDrawer();
+        else closeRightDrawer();
+    } else if (leftDrawerOpen) {
+        closeLeftDrawer();
+    } else if (rightDrawerOpen) {
+        closeRightDrawer();
+    } else if (statsDrawerOpen) {
+        closeStatsDrawer();
+    }
+    persistDrawerState();
+    syncDrawerUi();
+}
+
+let drawerControlsInitialized = false;
+
+function initDrawerControls() {
+    if (drawerControlsInitialized) return;
+    drawerControlsInitialized = true;
+
+    document.querySelectorAll('[data-drawer-open]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const side = button.dataset.drawerOpen;
+            if (side === 'left') toggleLeftDrawer();
+            if (side === 'right') toggleRightDrawer();
+            if (side === 'stats') toggleStatsDrawer();
+        });
+    });
+
+    document.querySelectorAll('[data-drawer-close]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const side = button.dataset.drawerClose;
+            if (side === 'left') closeLeftDrawer();
+            if (side === 'right') closeRightDrawer();
+            if (side === 'stats') closeStatsDrawer();
+            syncDrawerUi();
+        });
+    });
+
+    backdropRoot?.addEventListener('click', () => {
+        closeActiveDrawer();
+    });
+
+    marketToggleButton?.addEventListener('click', () => {
+        marketDeliveryOpen = !marketDeliveryOpen;
+        if (marketDeliveryOpen) {
+            clearSplitView();
+        }
+        persistContainerPanels();
+        loadInventory();
+    });
+
+    document.querySelectorAll('[data-market-open]').forEach((button) => {
+        button.addEventListener('click', () => toggleMarketPanel());
+    });
+
+    document.querySelectorAll('[data-materials-open]').forEach((button) => {
+        button.addEventListener('click', () => toggleMaterialsPanel());
+    });
+
+    initCraftControls();
+
+    document.querySelector('[data-market-refresh]')?.addEventListener('click', () => loadMarketListings());
+    document.querySelector('[data-materials-refresh]')?.addEventListener('click', () => loadMaterialsStash());
+
+    materialsPanelRoot?.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+
+        if (target.closest('[data-materials-close]')) {
+            closeMaterialsPanel();
+            return;
+        }
+
+        if (event.target === materialsPanelRoot) {
+            closeMaterialsPanel();
+            return;
+        }
+
+        const tabButton = target.closest('[data-materials-tab]');
+        if (!tabButton) return;
+        materialsActiveTab = tabButton.getAttribute('data-materials-tab') || 'metals';
+        renderMaterialsPanel();
+    });
+
+    marketPanelRoot?.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+
+        if (target.closest('[data-market-close]')) {
+            closeMarketPanel();
+            return;
+        }
+
+        const cancelButton = target.closest('[data-market-cancel]');
+        if (cancelButton) {
+            cancelMarketListing(cancelButton.getAttribute('data-market-cancel'));
+            return;
+        }
+
+        if (event.target === marketPanelRoot) {
+            closeMarketPanel();
+            return;
+        }
+
+        const buyButton = target.closest('[data-market-buy]');
+        if (!buyButton) return;
+        buyMarketListing(buyButton.getAttribute('data-market-buy'));
+    });
+
+    marketPanelRoot?.addEventListener('input', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+
+        if (target.matches('[data-market-filter-q]')) marketFilters.q = target.value.trim();
+        if (target.matches('[data-market-filter-quality]')) marketFilters.quality_bucket = target.value;
+        if (target.matches('[data-market-filter-category]')) marketFilters.category_code = target.value;
+        if (target.matches('[data-market-filter-min]')) marketFilters.min_price = target.value;
+        if (target.matches('[data-market-filter-max]')) marketFilters.max_price = target.value;
+    });
+
+    marketPanelRoot?.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!target.matches('[data-market-filter-quality], [data-market-filter-category], [data-market-filter-min], [data-market-filter-max]')) {
+            return;
+        }
+        loadMarketListings();
+    });
+
+    let marketSearchTimer = null;
+    marketPanelRoot?.addEventListener('input', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches('[data-market-filter-q]')) return;
+        clearTimeout(marketSearchTimer);
+        marketSearchTimer = setTimeout(() => loadMarketListings(), 320);
+    });
+}
+
 function persistCharacterPanel() {
-    localStorage.setItem('evolvaxe.inventory.characterPanelOpen', characterPanelOpen ? '1' : '0');
+    persistDrawerState();
 }
 
 function persistSplitView() {
@@ -984,10 +3031,60 @@ function findMainInventoryContainer(containers = []) {
     return containers.find((container) => containerKind(container) === 'main') || null;
 }
 
+function cellSizeForContainer(containerPublicId) {
+    return gridCellSizes.get(containerPublicId) || CELL_SIZE;
+}
+
+function resolveCellSize(gridNode) {
+    const containerPublicId = gridNode?.dataset?.containerPublicId;
+    if (containerPublicId && gridCellSizes.has(containerPublicId)) {
+        return gridCellSizes.get(containerPublicId);
+    }
+
+    const scope = gridNode?.closest('[data-inventory-expedition]')
+        || gridNode?.closest('.inventory-drawer--right')
+        || gridNode?.closest('[data-inventory-app]')
+        || gridNode;
+    const raw = getComputedStyle(scope).getPropertyValue('--inventory-cell').trim();
+    const parsed = parseFloat(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : CELL_SIZE;
+}
+
+function resolveSplitParentContainer(linkedPublicId, containers = []) {
+    const linked = containers.find((container) => container.public_id === linkedPublicId)
+        || containerIndex.get(linkedPublicId);
+    if (!linked) {
+        return findMainInventoryContainer(containers.length ? containers : [...containerIndex.values()]);
+    }
+
+    const chain = Array.isArray(linked.parent_chain) ? linked.parent_chain : [];
+    if (chain.length > 0) {
+        const parentPublicId = chain[chain.length - 1].container_public_id;
+        return containers.find((container) => container.public_id === parentPublicId)
+            || containerIndex.get(parentPublicId)
+            || findMainInventoryContainer(containers.length ? containers : [...containerIndex.values()]);
+    }
+
+    return findMainInventoryContainer(containers.length ? containers : [...containerIndex.values()]);
+}
+
 function toggleExpeditionPanel() {
-    expeditionCarryOpen = !expeditionCarryOpen;
-    persistContainerPanels();
-    loadInventory();
+    toggleLeftDrawer();
+}
+
+function isRightDrawerContainer(container) {
+    if (isEquippedBackpackContainer(container)) return false;
+
+    const kind = containerKind(container);
+    if (kind === 'expedition_carry') return false;
+    if (kind === 'main') return true;
+    if (kind === 'market_delivery') return marketDeliveryOpen;
+
+    return openContainerPublicIds.has(container.public_id);
+}
+
+function isLeftDrawerContainer(container) {
+    return containerKind(container) === 'expedition_carry';
 }
 
 function containerKind(container) {
@@ -1008,15 +3105,25 @@ function isEquippedBackpackContainer(container) {
     return container.source_item_public_id === equippedBackpackPublicId;
 }
 
+function isRightDrawerContainerVisible(container) {
+    if (!isRightDrawerContainer(container)) return false;
+
+    const kind = containerKind(container);
+    if (kind === 'main') return true;
+    if (kind === 'market_delivery') return marketDeliveryOpen;
+
+    return openContainerPublicIds.has(container.public_id);
+}
+
 function isContainerVisible(container) {
     if (isEquippedBackpackContainer(container)) {
         return false;
     }
 
     const kind = containerKind(container);
+    if (kind === 'expedition_carry') return false;
     if (kind === 'main') return true;
     if (kind === 'market_delivery') return marketDeliveryOpen;
-    if (kind === 'expedition_carry') return expeditionCarryOpen;
 
     return openContainerPublicIds.has(container.public_id);
 }
@@ -1053,6 +3160,10 @@ function containerDisplayName(container) {
         return 'Bolsos (2x2)';
     }
 
+    if (container.name && String(container.name).trim()) {
+        return String(container.name).trim();
+    }
+
     if (container.source_item_public_id) {
         const sourceItem = [...itemIndex.values()].find((entry) => entry.item?.public_id === container.source_item_public_id)?.item;
         if (sourceItem) {
@@ -1060,7 +3171,145 @@ function containerDisplayName(container) {
         }
     }
 
-    return container.name;
+    return container.definition_code || 'Container';
+}
+
+function renderAcceptanceBadges(container) {
+    const badges = Array.isArray(container.acceptance_summary?.badges) ? container.acceptance_summary.badges : [];
+    if (!badges.length) return '';
+
+    const tooltip = container.acceptance_summary?.tooltip || container.acceptance_summary?.label || '';
+    return `<div class="inventory-container-acceptance-badges" title="${escapeHtml(tooltip)}">${badges.map((badge) => `
+        <span class="inventory-container-acceptance-badge is-${escapeHtml(badge.code || 'all')}">
+            <span aria-hidden="true">${escapeHtml(badge.icon || '📦')}</span>
+            ${escapeHtml(badge.label || '')}
+        </span>
+    `).join('')}</div>`;
+}
+
+async function renameContainerInline(container, titleNode) {
+    if (!container?.can_rename) return;
+
+    const current = containerDisplayName(container);
+    openRenameModal({
+        title: 'Renomear armazenamento',
+        subtitle: 'Apenas baus e bags fisicos podem receber nome personalizado.',
+        currentName: current,
+        onSubmit: async (nextName) => {
+            if (nextName === current) return;
+
+            setStatus('Renomeando container...');
+            await apiFetch(`/api/inventory/containers/${encodeURIComponent(container.public_id)}/rename`, {
+                method: 'PATCH',
+                body: { name: nextName },
+            });
+            toast('Container renomeado.', 'success', 2400);
+            setStatus('Sincronizado');
+            await loadInventory();
+        },
+    });
+}
+
+function ensureRenameModalRoot() {
+    let modal = document.querySelector('[data-inventory-rename-modal]');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.className = 'inventory-rename-modal';
+    modal.dataset.inventoryRenameModal = '';
+    modal.hidden = true;
+    modal.innerHTML = `
+        <div class="inventory-rename-modal-backdrop" data-rename-modal-close></div>
+        <form class="inventory-rename-modal-card" data-rename-modal-form>
+            <header class="inventory-rename-modal-header">
+                <div>
+                    <p class="inventory-kicker" data-rename-modal-kicker>Renomear</p>
+                    <h3 data-rename-modal-title>Armazenamento</h3>
+                    <p class="inventory-rename-modal-subtitle" data-rename-modal-subtitle></p>
+                </div>
+                <button type="button" class="inventory-rename-modal-close" data-rename-modal-close aria-label="Fechar">×</button>
+            </header>
+            <label class="inventory-rename-modal-field">
+                <span>Nome personalizado</span>
+                <input type="text" maxlength="48" data-rename-modal-input placeholder="Deixe vazio para restaurar o padrao">
+            </label>
+            <footer class="inventory-rename-modal-actions">
+                <button type="button" class="inventory-button inventory-button-ghost" data-rename-modal-close>Cancelar</button>
+                <button type="submit" class="inventory-button">Salvar</button>
+            </footer>
+        </form>
+    `;
+    document.body.appendChild(modal);
+
+    modal.querySelectorAll('[data-rename-modal-close]').forEach((node) => {
+        node.addEventListener('click', closeRenameModal);
+    });
+
+    modal.querySelector('[data-rename-modal-form]')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const input = modal.querySelector('[data-rename-modal-input]');
+        const submit = modal.querySelector('[type="submit"]');
+        if (!renameModalState?.onSubmit || !input || !submit) return;
+
+        submit.disabled = true;
+        try {
+            await renameModalState.onSubmit(input.value.trim());
+            closeRenameModal();
+        } catch (error) {
+            handleError(error, 'Nao foi possivel renomear.');
+        } finally {
+            submit.disabled = false;
+        }
+    });
+
+    return modal;
+}
+
+let renameModalState = null;
+
+function openRenameModal({ title, subtitle = '', currentName = '', onSubmit }) {
+    const modal = ensureRenameModalRoot();
+    renameModalState = { onSubmit };
+    modal.querySelector('[data-rename-modal-title]').textContent = title;
+    modal.querySelector('[data-rename-modal-subtitle]').textContent = subtitle;
+    const input = modal.querySelector('[data-rename-modal-input]');
+    input.value = currentName;
+    modal.hidden = false;
+    window.requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+    });
+}
+
+function closeRenameModal() {
+    const modal = document.querySelector('[data-inventory-rename-modal]');
+    if (!modal) return;
+    modal.hidden = true;
+    renameModalState = null;
+}
+
+async function renameStorageContainerItem(item) {
+    const containerPublicId = item?.linked_container?.public_id;
+    if (!isStorageContainerItem(item) || !containerPublicId) {
+        toast('Apenas baus e bags podem ser renomeados.', 'info', 2800);
+        return;
+    }
+
+    openRenameModal({
+        title: 'Renomear armazenamento',
+        subtitle: 'O nome aparece no titulo do bau ou bag quando aberto.',
+        currentName: item.linked_container?.name || itemLabel(item),
+        onSubmit: async (nextName) => {
+            setStatus('Renomeando container...');
+            await apiFetch(`/api/inventory/containers/${encodeURIComponent(containerPublicId)}/rename`, {
+                method: 'PATCH',
+                body: { name: nextName },
+            });
+            toast('Armazenamento renomeado.', 'success', 2400);
+            setStatus('Sincronizado');
+            await loadInventory();
+        },
+    });
 }
 
 function containerDisplayHint(container) {
@@ -1157,8 +3406,9 @@ function renderItem(item, options = {}) {
     return `
         <div class="${classes}" data-item-public-id="${escapeHtml(item.public_id)}" aria-label="${escapeHtml(itemLabel(item))}">
             ${assetUrl ? `<img class="inventory-item-art" src="${escapeHtml(assetUrl)}" alt="" loading="lazy" onerror="this.closest('.inventory-item')?.classList.add('has-missing-art'); this.remove();">` : ''}
-            ${renderItemTypeBadge(item)}
+            ${options.hideTypeBadge ? '' : renderItemTypeBadge(item)}
             ${containerItemBadge(item)}
+            ${isEquippableItem(item) ? renderUpgradeStars(item) : ''}
             <span class="inventory-item-name">${escapeHtml(name)}</span>
             ${quantity > 1 ? `<span class="inventory-item-quantity">x${quantity}</span>` : ''}
         </div>
@@ -1181,8 +3431,9 @@ function renderContainerBreadcrumb(container) {
 
 function renderContainer(container, summaryEntry = null) {
     const isPhysical = Boolean(container.source_item_public_id);
+    const acceptanceTone = container.acceptance_summary?.tone || 'all';
     const section = document.createElement('section');
-    section.className = `inventory-container${isPhysical ? ' inventory-container-physical' : ''}`;
+    section.className = `inventory-container acceptance-${escapeHtml(acceptanceTone)}${isPhysical ? ' inventory-container-physical' : ''}`;
     section.dataset.containerPublicId = container.public_id;
     if (container.source_item_public_id) {
         section.dataset.sourceItemPublicId = container.source_item_public_id;
@@ -1191,35 +3442,53 @@ function renderContainer(container, summaryEntry = null) {
     const badge = isPhysical
         ? '<span class="inventory-container-badge">Fisico</span>'
         : '';
-    const acceptanceBadge = container.acceptance_summary?.label
-        ? `<span class="inventory-container-acceptance">${escapeHtml(container.acceptance_summary.label)}</span>`
-        : '';
+    const acceptanceBadges = renderAcceptanceBadges(container);
     const breadcrumb = renderContainerBreadcrumb(container);
     const canOrganize = !['expedition_carry', 'market_delivery'].includes(containerKind(container));
-
-    const canClose = isPhysical || containerKind(container) === 'market_delivery' || containerKind(container) === 'expedition_carry';
+    const canRename = Boolean(container.can_rename);
+    const titleAttrs = canRename ? ' data-container-rename-title title="Duplo clique para renomear"' : '';
+    const canClose = isPhysical || containerKind(container) === 'market_delivery';
 
     section.innerHTML = `
         <header class="inventory-container-header">
             <div class="inventory-container-title">
                 ${breadcrumb}
                 <div class="inventory-container-title-row">
-                    <h2>${escapeHtml(containerDisplayName(container))}</h2>
+                    <h2${titleAttrs}>${escapeHtml(containerDisplayName(container))}</h2>
                     ${badge}
-                    ${acceptanceBadge}
                 </div>
+                ${acceptanceBadges}
                 <p>${escapeHtml(containerDisplayHint(container))}</p>
-                ${isPhysical ? '<p class="inventory-container-link">Duplo clique no item para abrir ou fechar</p>' : ''}
+                ${isPhysical ? '<p class="inventory-container-link">Duplo clique no item para abrir split · duplo clique no titulo para renomear</p>' : ''}
             </div>
             <div class="inventory-container-meta-block">
                 <span class="inventory-container-meta">${Number(container.grid.columns)}x${Number(container.grid.rows)}</span>
                 <span class="inventory-container-occupancy">${escapeHtml(occupancyLabel(container, summaryEntry))}</span>
-                ${canOrganize ? '<button type="button" class="inventory-button inventory-container-organize" data-container-organize>Organizar</button>' : ''}
+                ${canOrganize ? `
+                    <div class="inventory-organize-group">
+                        <select data-container-organize-mode aria-label="Modo de organizacao">
+                            <option value="compact">Compactar</option>
+                            <option value="type">Por tipo</option>
+                            <option value="rarity">Por raridade</option>
+                            <option value="size">Por tamanho</option>
+                            <option value="name">Por nome</option>
+                        </select>
+                        <button type="button" class="inventory-button inventory-container-organize" data-container-organize>Organizar</button>
+                    </div>
+                ` : ''}
                 ${canClose ? '<button type="button" class="inventory-container-close" aria-label="Fechar container">×</button>' : ''}
             </div>
         </header>
         <div class="inventory-grid-wrap"></div>
     `;
+
+    if (canRename) {
+        section.querySelector('[data-container-rename-title]')?.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            renameContainerInline(container, event.currentTarget);
+        });
+    }
 
     section.querySelector('.inventory-container-close')?.addEventListener('click', (event) => {
         event.preventDefault();
@@ -1233,7 +3502,8 @@ function renderContainer(container, summaryEntry = null) {
     section.querySelector('[data-container-organize]')?.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        await organizeContainer(container.public_id);
+        const mode = section.querySelector('[data-container-organize-mode]')?.value || 'compact';
+        await organizeContainer(container.public_id, mode);
     });
 
     section.querySelectorAll('[data-breadcrumb-container]').forEach((button) => {
@@ -1263,7 +3533,7 @@ function renderSplitLayout(parentContainer, childContainer, summaryByPublicId) {
                 <p class="inventory-kicker">Armazenamento aninhado</p>
                 <h2>${escapeHtml(containerDisplayName(childContainer))}</h2>
             </div>
-            <button type="button" class="inventory-button inventory-split-close">Fechar split</button>
+            <button type="button" class="inventory-button inventory-split-close">Voltar ao inventario</button>
         </header>
         <div class="inventory-split-panels"></div>
     `;
@@ -1284,7 +3554,7 @@ function renderSplitLayout(parentContainer, childContainer, summaryByPublicId) {
     return host;
 }
 
-async function organizeContainer(containerPublicId) {
+async function organizeContainer(containerPublicId, mode = 'compact') {
     if (actionInFlight || loading) return;
 
     actionInFlight = true;
@@ -1292,6 +3562,7 @@ async function organizeContainer(containerPublicId) {
         setStatus('Organizando...');
         const response = await apiFetch(`/api/inventory/containers/${encodeURIComponent(containerPublicId)}/organize`, {
             method: 'POST',
+            body: { mode },
         });
         const moved = Number(response.data?.moved_items || 0);
         toast(moved > 0 ? `Container reorganizado (${moved} item(ns) movido(s)).` : 'Container ja estava organizado.', 'success', 2800);
@@ -1301,25 +3572,6 @@ async function organizeContainer(containerPublicId) {
         handleError(error, 'Nao foi possivel organizar o container.');
     } finally {
         actionInFlight = false;
-    }
-}
-
-async function renameInventoryItem(item) {
-    const currentName = itemLabel(item);
-    const nextName = window.prompt('Nome personalizado do item (vazio restaura o padrao):', currentName);
-    if (nextName === null) return;
-
-    try {
-        setStatus('Renomeando item...');
-        await apiFetch(`/api/inventory/items/${encodeURIComponent(item.public_id)}/rename`, {
-            method: 'PATCH',
-            body: { item_name: nextName.trim() },
-        });
-        toast('Item renomeado.', 'success', 2400);
-        setStatus('Sincronizado');
-        await loadInventory();
-    } catch (error) {
-        handleError(error, 'Nao foi possivel renomear o item.');
     }
 }
 
@@ -1347,44 +3599,69 @@ async function useEquippedPotionHotkey(slotCode) {
 function renderEquipment(equipment = [], stats = [], links = [], setBonuses = []) {
     if (!equipmentRoot) return;
 
+    lastCharacterStats = stats;
     equipmentRoot.replaceChildren();
     const equippedCount = equipment.filter((slot) => slot.item).length;
-    equipmentRoot.classList.toggle('is-collapsed', !characterPanelOpen);
+    equipmentRoot.classList.remove('is-collapsed');
     equipmentRoot.innerHTML = `
-        <header class="inventory-equipment-header">
-            <div>
-                <p class="inventory-kicker">Personagem</p>
-                <h2>Equipamentos</h2>
+        <div class="inventory-left-panel">
+            <div class="inventory-left-tabs" role="tablist" aria-label="Painel do personagem">
+                <button type="button" class="inventory-left-tab${leftDrawerTab === 'equipment' ? ' is-active' : ''}" data-left-tab="equipment" role="tab" aria-selected="${leftDrawerTab === 'equipment'}">Equipamento</button>
+                <button type="button" class="inventory-left-tab${leftDrawerTab === 'stats' ? ' is-active' : ''}" data-left-tab="stats" role="tab" aria-selected="${leftDrawerTab === 'stats'}">Status</button>
+                <span class="inventory-left-tab-meta">${equippedCount}/${equipment.length} slot(s)</span>
             </div>
-            <div class="inventory-equipment-header-actions">
-                <span>${equippedCount}/${equipment.length} slot(s)</span>
-                <button class="inventory-button inventory-equipment-toggle" type="button" data-character-toggle>${characterPanelOpen ? 'Ocultar' : 'Mostrar'} (I)</button>
-            </div>
-        </header>
-        <div class="inventory-character-layout">
-            <div class="inventory-paperdoll">
-                <div class="inventory-character-figure" aria-hidden="true">
-                    <div class="inventory-character-glow"></div>
-                    <div class="inventory-character-head"></div>
-                    <div class="inventory-character-body"></div>
-                    <div class="inventory-character-legs"></div>
+            <div class="inventory-left-tab-panels">
+                <div class="inventory-left-tab-panel${leftDrawerTab === 'equipment' ? ' is-active' : ''}" data-left-tab-panel="equipment" role="tabpanel"${leftDrawerTab === 'equipment' ? '' : ' hidden'}>
+                    <div class="inventory-equipment-drawer-wrap">
+                        <div class="inventory-equipment-scaler">
+                            <div class="inventory-character-layout">
+                                <div class="inventory-paperdoll">
+                                    <div class="inventory-character-figure" aria-hidden="true">
+                                        <div class="inventory-character-glow"></div>
+                                        <div class="inventory-character-head"></div>
+                                        <div class="inventory-character-body"></div>
+                                        <div class="inventory-character-legs"></div>
+                                    </div>
+                                    <svg class="inventory-equipment-links" data-equipment-links aria-hidden="true"></svg>
+                                    <div class="inventory-equipment-stage" data-equipment-stage></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <svg class="inventory-equipment-links" data-equipment-links aria-hidden="true"></svg>
-                <div class="inventory-equipment-stage" data-equipment-stage></div>
+                <div class="inventory-left-tab-panel${leftDrawerTab === 'stats' ? ' is-active' : ''}" data-left-tab-panel="stats" role="tabpanel"${leftDrawerTab === 'stats' ? '' : ' hidden'}>
+                    <aside class="inventory-character-stats inventory-character-stats--tab" data-character-stats-panel></aside>
+                </div>
             </div>
-            <aside class="inventory-character-stats" data-character-stats></aside>
         </div>
     `;
 
-    equipmentRoot.querySelector('[data-character-toggle]')?.addEventListener('click', () => toggleCharacterPanel());
-    renderCharacterStats(stats, setBonuses, playerPower);
+    equipmentRoot.querySelectorAll('[data-left-tab]').forEach((button) => {
+        button.addEventListener('click', () => setLeftDrawerTab(button.dataset.leftTab || 'equipment'));
+    });
 
-    if (!characterPanelOpen) {
-        return;
+    renderCharacterStats(stats, setBonuses, playerPower, equipmentRoot.querySelector('[data-character-stats-panel]'));
+    if (statsDrawerOpen) {
+        renderCharacterStats(stats, setBonuses, playerPower, statsDrawerPanel);
     }
-
     renderEquipmentSlots(equipment);
-    window.requestAnimationFrame(() => renderEquipmentLinks(links, setBonuses));
+    window.requestAnimationFrame(() => {
+        renderEquipmentLinks(links, setBonuses);
+        window.requestAnimationFrame(() => renderEquipmentLinks(links, setBonuses));
+    });
+}
+
+function renderExpeditionDrawerSection(container, summaryEntry = null) {
+    if (!expeditionRoot) return;
+
+    expeditionRoot.replaceChildren();
+    expeditionRoot.appendChild(renderContainer(container, summaryEntry));
+    const section = expeditionRoot.querySelector(`[data-container-public-id="${container.public_id}"]`);
+    const gridNode = section?.querySelector('.inventory-grid');
+    if (!gridNode) return;
+
+    const grid = initializeGrid(container, gridNode);
+    addItems(container, grid);
 }
 
 function isTwoHandedWeapon(item) {
@@ -1397,6 +3674,7 @@ function renderEquipmentSlots(equipment = []) {
     if (!stage) return;
 
     const byCode = new Map(equipment.map((slot) => [slot.code, slot]));
+    const isDrawerPaperdoll = Boolean(equipmentRoot.querySelector('.inventory-equipment-drawer-wrap'));
     const weaponSlot = byCode.get('weapon');
     const twoHandedWeapon = weaponSlot?.item && isTwoHandedWeapon(weaponSlot.item) ? weaponSlot.item : null;
     const occupiedOffhand = ['weapon_offhand', 'shield', 'quiver']
@@ -1405,30 +3683,57 @@ function renderEquipmentSlots(equipment = []) {
     const offhand = occupiedOffhand || { code: 'offhand', name: 'Offhand', item: null };
     const offhandGhost = !occupiedOffhand && twoHandedWeapon ? twoHandedWeapon : null;
 
-    const visualSlots = [
-        { slot: byCode.get('pet') },
-        { slot: byCode.get('helmet') },
-        { slot: byCode.get('wings') },
-        { slot: byCode.get('weapon') },
-        { slot: byCode.get('chest') },
-        { slot: offhand, ghostItem: offhandGhost },
-        { slot: byCode.get('gloves') },
-        { slot: byCode.get('pants') },
-        { slot: byCode.get('boots') },
-        { slot: byCode.get('amulet') },
-        { slot: byCode.get('earring') },
-        { slot: byCode.get('ring') },
-        { slot: byCode.get('ring_2') },
-        { slot: byCode.get('backpack') },
-    ].filter((entry) => entry.slot);
+    const visualSlots = isDrawerPaperdoll
+        ? [
+            { slot: byCode.get('pet') },
+            { slot: byCode.get('helmet') },
+            { slot: byCode.get('wings') },
+            { slot: byCode.get('weapon') },
+            { slot: byCode.get('chest') },
+            { slot: offhand, ghostItem: offhandGhost },
+            { slot: byCode.get('gloves') },
+            { slot: byCode.get('pants') },
+            { slot: byCode.get('boots') },
+            { slot: byCode.get('belt') },
+            { slot: byCode.get('amulet') },
+            { slot: byCode.get('earring') },
+            { slot: byCode.get('ring') },
+            { slot: byCode.get('ring_2') },
+            { slot: byCode.get('backpack') },
+            { slot: byCode.get('potion_1') },
+            { slot: byCode.get('potion_2') },
+            { slot: byCode.get('potion_3') },
+            { slot: byCode.get('potion_4') },
+        ].filter((entry) => entry.slot)
+        : [
+            { slot: byCode.get('pet') },
+            { slot: byCode.get('helmet') },
+            { slot: byCode.get('wings') },
+            { slot: byCode.get('weapon') },
+            { slot: byCode.get('chest') },
+            { slot: offhand, ghostItem: offhandGhost },
+            { slot: byCode.get('gloves') },
+            { slot: byCode.get('pants') },
+            { slot: byCode.get('boots') },
+            { slot: byCode.get('amulet') },
+            { slot: byCode.get('earring') },
+            { slot: byCode.get('ring') },
+            { slot: byCode.get('ring_2') },
+            { slot: byCode.get('backpack') },
+        ].filter((entry) => entry.slot);
 
     for (const entry of visualSlots) {
-        stage.appendChild(equipmentSlotNode(entry.slot, { ghostItem: entry.ghostItem || null }));
+        stage.appendChild(equipmentSlotNode(entry.slot, {
+            ghostItem: entry.ghostItem || null,
+            showLabel: false,
+        }));
     }
 }
 
 function equipmentSlotNode(slot, options = {}) {
     const ghostItem = options.ghostItem || null;
+    const showLabel = Boolean(options.showLabel);
+    const titleLabel = options.titleLabel || '';
     const displayItem = slot.item || ghostItem;
     const isGhostOccupied = Boolean(!slot.item && ghostItem);
     const node = document.createElement('article');
@@ -1437,6 +3742,12 @@ function equipmentSlotNode(slot, options = {}) {
     node.className = `inventory-equipment-slot is-${escapeHtml(visualCode)}${displayItem ? ' has-item' : ''}${isGhostOccupied ? ' is-ghost-occupied' : ''}${rarityClass}`;
     node.dataset.equipmentSlot = slot.code;
     node.dataset.visualSlot = visualCode;
+    if (titleLabel) {
+        node.title = titleLabel;
+    }
+    const labelHtml = showLabel
+        ? `<span class="inventory-equipment-slot-name">${escapeHtml(equipmentSlotLabel(slot))}</span>`
+        : '';
     if (isGhostOccupied) {
         node.dataset.ghostOccupied = '1';
         node.title = 'Ocupado por arma de duas maos';
@@ -1444,6 +3755,7 @@ function equipmentSlotNode(slot, options = {}) {
 
     if (!displayItem) {
         node.innerHTML = `
+            ${labelHtml}
             ${renderEquipmentSlotIcon(slot.code)}
             <span class="inventory-equipment-empty" aria-hidden="true"></span>
         `;
@@ -1451,8 +3763,9 @@ function equipmentSlotNode(slot, options = {}) {
     }
 
     node.innerHTML = `
+        ${labelHtml}
         ${renderEquipmentSlotIcon(slot.code)}
-        <div class="inventory-equipment-item-shell${isGhostOccupied ? ' is-ghost-shell' : ''}">${renderItem(displayItem, { ghost: isGhostOccupied })}</div>
+        <div class="inventory-equipment-item-shell${isGhostOccupied ? ' is-ghost-shell' : ''}">${renderItem(displayItem, { ghost: isGhostOccupied, hideTypeBadge: true })}</div>
         ${!isGhostOccupied && slot.item ? renderUpgradeStars(slot.item) : ''}
     `;
 
@@ -1502,12 +3815,34 @@ function equipmentSlotElement(slotCode) {
         || equipmentRoot.querySelector(`[data-visual-slot="${visual}"]`);
 }
 
+function equipmentSlotCenterInPaperdoll(element, paperdoll) {
+    if (!element || !paperdoll || !paperdoll.contains(element)) {
+        return null;
+    }
+
+    const elementRect = element.getBoundingClientRect();
+    const paperdollRect = paperdoll.getBoundingClientRect();
+    if (!paperdollRect.width || !paperdollRect.height) {
+        return null;
+    }
+
+    const scaleX = paperdoll.offsetWidth / paperdollRect.width;
+    const scaleY = paperdoll.offsetHeight / paperdollRect.height;
+
+    return {
+        x: ((elementRect.left - paperdollRect.left) + (elementRect.width / 2)) * scaleX,
+        y: ((elementRect.top - paperdollRect.top) + (elementRect.height / 2)) * scaleY,
+    };
+}
+
 function renderEquipmentLinks(links = [], setBonuses = []) {
     const svg = equipmentRoot.querySelector('[data-equipment-links]');
     const paperdoll = equipmentRoot.querySelector('.inventory-paperdoll');
     if (!svg || !paperdoll) return;
 
     svg.replaceChildren();
+    svg.setAttribute('viewBox', `0 0 ${paperdoll.offsetWidth} ${paperdoll.offsetHeight}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     equipmentRoot.querySelectorAll('.inventory-equipment-slot.is-set-glow-1, .inventory-equipment-slot.is-set-glow-2, .inventory-equipment-slot.is-set-glow-3')
         .forEach((node) => {
             node.classList.remove('is-set-glow-1', 'is-set-glow-2', 'is-set-glow-3');
@@ -1532,14 +3867,8 @@ function renderEquipmentLinks(links = [], setBonuses = []) {
         const points = slots
             .map((slot) => equipmentSlotElement(slot.slot_code))
             .filter(Boolean)
-            .map((element) => {
-                const box = element.getBoundingClientRect();
-                const root = paperdoll.getBoundingClientRect();
-                return {
-                    x: box.left - root.left + box.width / 2,
-                    y: box.top - root.top + box.height / 2,
-                };
-            });
+            .map((element) => equipmentSlotCenterInPaperdoll(element, paperdoll))
+            .filter(Boolean);
 
         if (points.length < 2) continue;
 
@@ -1580,14 +3909,16 @@ function equipmentSlotLabel(slot) {
         potion_1: 'Pocao',
         potion_2: 'Pocao',
         potion_3: 'Pocao',
+        potion_4: 'Pocao',
+        earring: 'Brinco',
     };
 
     return labels[visualCode] || slot.name;
 }
 
-function renderCharacterStats(stats = [], setBonuses = [], power = null) {
-    const root = equipmentRoot?.querySelector('[data-character-stats]');
-    if (!root) return;
+function renderCharacterStats(stats = [], setBonuses = [], power = null, root = null) {
+    const target = root || equipmentRoot?.querySelector('[data-character-stats-panel]') || equipmentRoot?.querySelector('[data-character-stats]');
+    if (!target) return;
 
     const visibleStats = stats.filter((stat) => Number(stat.value || 0) !== 0);
     const attack = Number(power?.attack || 0);
@@ -1611,7 +3942,7 @@ function renderCharacterStats(stats = [], setBonuses = [], power = null) {
         : '';
 
     if (!visibleStats.length && !setBonuses.length && !hasCorePower) {
-        root.innerHTML = '<strong>Status</strong><span class="inventory-character-stat-empty">Sem bonus equipados.</span>';
+        target.innerHTML = '<strong>Status</strong><span class="inventory-character-stat-empty">Sem bonus equipados.</span>';
         return;
     }
 
@@ -1625,7 +3956,7 @@ function renderCharacterStats(stats = [], setBonuses = [], power = null) {
         `).join('')}</div>`
         : '';
 
-    root.innerHTML = `
+    target.innerHTML = `
         <strong>Status</strong>
         ${coreBlock}
         ${visibleStats.length ? `<div class="inventory-character-stat-list">${visibleStats.map((stat) => {
@@ -1638,44 +3969,14 @@ function renderCharacterStats(stats = [], setBonuses = [], power = null) {
 }
 
 function toggleCharacterPanel() {
-    characterPanelOpen = !characterPanelOpen;
-    persistCharacterPanel();
-    loadInventory();
+    toggleLeftDrawer();
 }
 
-function renderContainerDock(containers = []) {
-    if (!dockRoot) return;
-
-    const secondary = containers.filter(shouldShowContainerInDock);
-    if (!secondary.length) {
-        dockRoot.hidden = true;
-        dockRoot.replaceChildren();
-        return;
-    }
-
-    dockRoot.hidden = false;
-    dockRoot.replaceChildren();
-    dockRoot.innerHTML = `
-        <div class="inventory-dock-label">
-            <strong>Armazenamento</strong>
-            <span>Expedicao, entregas e containers abertos. Duplo clique em mochilas/baus para abrir.</span>
-        </div>
-        <div class="inventory-dock-actions"></div>
-    `;
-
-    const actions = dockRoot.querySelector('.inventory-dock-actions');
-    for (const container of secondary) {
-        const kind = containerKind(container);
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = `inventory-dock-button is-${kind}${isContainerVisible(container) ? ' is-open' : ''}`;
-        button.dataset.containerPublicId = container.public_id;
-        button.innerHTML = `
-            <span>${escapeHtml(containerDisplayName(container))}</span>
-            <small>${escapeHtml(containerDisplayHint(container))} - ${Number(container.grid.columns)}x${Number(container.grid.rows)}</small>
-        `;
-        button.addEventListener('click', () => toggleContainer(container));
-        actions.appendChild(button);
+function renderContainerDock() {
+    if (marketToggleButton) {
+        marketToggleButton.hidden = false;
+        marketToggleButton.classList.toggle('is-active', marketDeliveryOpen);
+        marketToggleButton.textContent = marketDeliveryOpen ? 'Fechar entregas' : 'Entregas';
     }
 }
 
@@ -1819,8 +4120,9 @@ function findContainerItemUnderPointer(clientX, clientY, gridEl, containerPublic
     if (!grid?.el) return null;
 
     const rect = gridEl.getBoundingClientRect();
-    const cellX = Math.floor((clientX - rect.left) / CELL_SIZE);
-    const cellY = Math.floor((clientY - rect.top) / CELL_SIZE);
+    const cellSize = cellSizeForContainer(containerPublicId);
+    const cellX = Math.floor((clientX - rect.left) / cellSize);
+    const cellY = Math.floor((clientY - rect.top) / cellSize);
     const snapshot = targetSnapshotForGrid(containerPublicId, grid, exceptItemPublicId);
 
     for (const placement of snapshot) {
@@ -1909,6 +4211,11 @@ function evaluatePlacement(containerPublicId, grid, itemPublicId, x, y, w, h, po
     const current = itemIndex.get(itemPublicId);
     if (!current) return { state: 'invalid' };
 
+    const targetContainer = containerIndex.get(containerPublicId);
+    if (targetContainer && !canContainerAcceptItem(targetContainer, current.item)) {
+        return { state: 'invalid', reason: 'acceptance' };
+    }
+
     const depositTarget = resolveDepositTarget(
         containerPublicId,
         grid,
@@ -1971,6 +4278,7 @@ function renderGhostPreview(containerPublicId, x, y, w, h, state) {
     const ghost = ghostElementForContainer(containerPublicId);
     if (!ghost) return;
 
+    const cellSize = cellSizeForContainer(containerPublicId);
     ghost.hidden = false;
     ghost.classList.remove('is-valid', 'is-invalid', 'is-merge', 'is-deposit', 'is-bless', 'is-soul', 'is-chaos', 'is-reroll', 'is-socket');
     ghost.classList.add(`is-${state}`);
@@ -1980,10 +4288,10 @@ function renderGhostPreview(containerPublicId, x, y, w, h, state) {
         for (let col = x; col < x + w; col += 1) {
             const cell = document.createElement('span');
             cell.className = 'inventory-ghost-cell';
-            cell.style.left = `${col * CELL_SIZE}px`;
-            cell.style.top = `${row * CELL_SIZE}px`;
-            cell.style.width = `${CELL_SIZE}px`;
-            cell.style.height = `${CELL_SIZE}px`;
+            cell.style.left = `${col * cellSize}px`;
+            cell.style.top = `${row * cellSize}px`;
+            cell.style.width = `${cellSize}px`;
+            cell.style.height = `${cellSize}px`;
             ghost.appendChild(cell);
         }
     }
@@ -2168,6 +4476,7 @@ function destroyGrids() {
         grid.destroy(false);
     }
     grids = new Map();
+    gridCellSizes.clear();
     itemIndex = new Map();
     containerIndex = new Map();
     dragSnapshots = new Map();
@@ -2204,8 +4513,10 @@ function isPointerInsideElement(element, clientX, clientY) {
 
 function gridCellFromPointer(gridEl, clientX, clientY, footprintW, footprintH, columns, rows) {
     const rect = gridEl.getBoundingClientRect();
-    const rawX = Math.floor((clientX - rect.left) / CELL_SIZE);
-    const rawY = Math.floor((clientY - rect.top) / CELL_SIZE);
+    const containerPublicId = gridEl?.dataset?.containerPublicId;
+    const cellSize = containerPublicId ? cellSizeForContainer(containerPublicId) : resolveCellSize(gridEl);
+    const rawX = Math.floor((clientX - rect.left) / cellSize);
+    const rawY = Math.floor((clientY - rect.top) / cellSize);
     const maxX = Math.max(0, columns - footprintW);
     const maxY = Math.max(0, rows - footprintH);
 
@@ -2602,20 +4913,29 @@ function updatePlacementHint(element) {
 
     applyPlacementHintClasses(element, evaluation.state, Boolean(current.rotated));
 
+    const pointerHover = activeDrag.pointerX != null && activeDrag.pointerY != null
+        ? findGridUnderPointer(activeDrag.pointerX, activeDrag.pointerY)
+        : null;
+    const pointerOverOtherContainer = pointerHover
+        && pointerHover.containerPublicId !== located.containerPublicId;
+
     if (evaluation.state === 'deposit' && evaluation.slot && evaluation.linkedContainer) {
         activeDrag.hoverState = 'deposit';
         activeDrag.depositContainerPublicId = evaluation.linkedContainer.public_id;
         activeDrag.depositSlot = evaluation.slot;
         activeDrag.depositRotated = evaluation.rotated ?? Boolean(current.rotated);
-        const depositSize = dimensionsForState(current.item, activeDrag.depositRotated);
-        renderGhostPreview(
-            evaluation.linkedContainer.public_id,
-            evaluation.slot.grid_x,
-            evaluation.slot.grid_y,
-            depositSize.w,
-            depositSize.h,
-            'deposit'
-        );
+        if (!pointerOverOtherContainer) {
+            const depositSize = dimensionsForState(current.item, activeDrag.depositRotated);
+            clearAllGhostPreviews();
+            renderGhostPreview(
+                evaluation.linkedContainer.public_id,
+                evaluation.slot.grid_x,
+                evaluation.slot.grid_y,
+                depositSize.w,
+                depositSize.h,
+                'deposit'
+            );
+        }
         return;
     }
 
@@ -2625,6 +4945,12 @@ function updatePlacementHint(element) {
     activeDrag.depositRotated = null;
     activeDrag.hoverX = x;
     activeDrag.hoverY = y;
+
+    if (pointerOverOtherContainer) {
+        return;
+    }
+
+    clearAllGhostPreviews();
     renderGhostPreview(located.containerPublicId, x, y, size.w, size.h, evaluation.state);
 }
 
@@ -2727,11 +5053,12 @@ function rotateDraggedItem() {
     }
 
     if (container && columns > 0 && rows > 0) {
+        const sourceCellSize = cellSizeForContainer(container.public_id);
         const originX = activeDrag.pointerX != null && dragged.grid?.el
-            ? Math.floor((activeDrag.pointerX - dragged.grid.el.getBoundingClientRect().left) / CELL_SIZE)
+            ? Math.floor((activeDrag.pointerX - dragged.grid.el.getBoundingClientRect().left) / sourceCellSize)
             : currentX + Math.floor(currentSize.w / 2);
         const originY = activeDrag.pointerY != null && dragged.grid?.el
-            ? Math.floor((activeDrag.pointerY - dragged.grid.el.getBoundingClientRect().top) / CELL_SIZE)
+            ? Math.floor((activeDrag.pointerY - dragged.grid.el.getBoundingClientRect().top) / sourceCellSize)
             : currentY + Math.floor(currentSize.h / 2);
         const allCells = [];
 
@@ -2817,6 +5144,9 @@ function hasPlacementChanged(snapshot, interaction) {
 }
 
 function clearActiveDrag() {
+    if (activeDrag) {
+        cleanupDragUi();
+    }
     activeDrag = null;
 }
 
@@ -3169,6 +5499,14 @@ async function handleDrop(targetContainerPublicId, node, coords = null) {
         return;
     }
 
+    const targetContainer = containerIndex.get(interaction.target_container_public_id);
+    if (targetContainer && !canContainerAcceptItem(targetContainer, sourceItem)) {
+        revertItem(interaction.item_public_id);
+        toast(acceptanceRejectionMessage(targetContainer), 'error', 3800);
+        clearActiveDrag();
+        return;
+    }
+
     if (!isPlacementValidAgainstSnapshot(
         interaction.target_container_public_id,
         targetSnapshot,
@@ -3204,6 +5542,10 @@ async function finalizeDrag(event) {
         const node = dragged.node;
         const coords = dragPointerCoords(event);
 
+        if (await tryAssignInventoryDragToCraftSlot(event)) {
+            return;
+        }
+
         let targetContainerPublicId = activeDrag.sourceContainerPublicId;
 
         if (activeDrag.hoverState === 'deposit' && activeDrag.depositContainerPublicId) {
@@ -3215,7 +5557,6 @@ async function finalizeDrag(event) {
             const hover = findGridUnderPointer(coords.clientX, coords.clientY);
             if (hover && hover.containerPublicId !== activeDrag.sourceContainerPublicId) {
                 targetContainerPublicId = hover.containerPublicId;
-                updateAllGhostPreviews(coords.clientX, coords.clientY);
             }
         }
 
@@ -3228,11 +5569,15 @@ async function finalizeDrag(event) {
 }
 
 function initializeGrid(container, gridNode) {
+    const cellSize = resolveCellSize(gridNode);
+    gridCellSizes.set(container.public_id, cellSize);
+    gridNode.style.setProperty('--inventory-cell', `${cellSize}px`);
+
     const grid = GridStack.init({
         column: Number(container.grid.columns),
         minRow: Number(container.grid.rows),
         maxRow: Number(container.grid.rows),
-        cellHeight: CELL_SIZE,
+        cellHeight: cellSize,
         margin: 0,
         float: true,
         animate: false,
@@ -3349,13 +5694,13 @@ function initializeGrid(container, gridNode) {
         enforceDraggedFootprint({ containerPublicId: container.public_id, grid, node, element });
 
         try {
-            endDragSession();
             await finalizeDrag(event);
         } catch (error) {
             console.error('[inventory-drag]', error);
             revertItem(node.id);
-            clearActiveDrag();
+        } finally {
             endDragSession();
+            clearActiveDrag();
         }
     });
 
@@ -3454,15 +5799,17 @@ function renderContextMenu(menu, item, actions) {
     renameButton.className = 'inventory-context-menu-item';
     renameButton.innerHTML = `
         <span class="inventory-context-menu-item-label">Renomear</span>
-        <span class="inventory-context-menu-item-description">Definir nome personalizado</span>
+        <span class="inventory-context-menu-item-description">Definir nome do bau ou bag</span>
     `;
     renameButton.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
         closeContextMenu();
-        await renameInventoryItem(item);
+        await renameStorageContainerItem(item);
     });
-    list.appendChild(renameButton);
+    if (isStorageContainerItem(item)) {
+        list.appendChild(renameButton);
+    }
 
     for (const action of actions) {
         const button = document.createElement('button');
@@ -3559,8 +5906,8 @@ async function openLinkedContainerForItem(item) {
         return true;
     }
 
-    const mainContainer = findMainInventoryContainer([...containerIndex.values()]);
-    if (isChestContainerItem(item) && mainContainer) {
+    const mainContainer = resolveSplitParentContainer(linked.public_id, [...containerIndex.values()]);
+    if (mainContainer) {
         splitViewState = {
             parentPublicId: mainContainer.public_id,
             childPublicId: linked.public_id,
@@ -3600,13 +5947,15 @@ function bindContainerLinks() {
     }
 }
 
-function renderSummary(summary) {
+function renderSummary(summary, wallets = []) {
     if (!summaryNode) return;
 
     const containers = summary?.containers?.length || 0;
     const items = summary?.item_count || 0;
     const equipped = summary?.equipped_item_count || 0;
-    summaryNode.textContent = `${containers} containers · ${items} itens · ${equipped} equipado(s)`;
+    const gold = walletBalance('gold') || Number(wallets.find((entry) => (entry.currency_code || entry.code) === 'gold')?.balance || 0);
+    const premium = walletBalance('premium') || Number(wallets.find((entry) => (entry.currency_code || entry.code) === 'premium')?.balance || 0);
+    summaryNode.textContent = `${containers} containers · ${items} itens · ${equipped} equipado(s) · ${gold.toLocaleString('pt-BR')} G · ${premium.toLocaleString('pt-BR')} 💎`;
 }
 
 function inspectSummary(data) {
@@ -3626,15 +5975,80 @@ function inspectSummary(data) {
 async function executeItemAction(item, action) {
     if (actionInFlight || loading) return;
 
+    if (action.code === 'INSPECT') {
+        await openInvestigationModal(item);
+        return;
+    }
+
     if (action.requires_confirmation) {
         const label = action.name || action.code;
+        let bodyHtml = `<p>Confirmar esta acao em <strong>${escapeHtml(itemLabel(item))}</strong>?</p>`;
+
+        if (action.code === 'SELL') {
+            const npcValue = Number(item?.npc_value || 0);
+            const marketValue = Number(item?.market_value || 0);
+            bodyHtml = `<p>Vender <strong>${escapeHtml(itemLabel(item))}</strong> ao NPC?</p>
+                <p>Valor de mercado: <strong>${marketValue} G</strong><br>Venda NPC: <strong>${npcValue} G</strong></p>`;
+        }
+
+        if (action.code === 'LIST_MARKET') {
+            const bounds = listingPriceBoundsForItem(item);
+            const inputId = `listing-price-${item.public_id}`;
+            bodyHtml = `<p>Anunciar <strong>${escapeHtml(itemLabel(item))}</strong> no mercado P2P.</p>
+                <p>Faixa permitida: <strong>${bounds.min.toLocaleString('pt-BR')} – ${bounds.max.toLocaleString('pt-BR')} 💎</strong><br>
+                Sugestao: <strong>${bounds.suggested.toLocaleString('pt-BR')} 💎</strong></p>
+                <label class="inventory-action-field" for="${inputId}">Preco em Eter Cristal (💎)</label>
+                <input id="${inputId}" type="number" min="${bounds.min}" max="${bounds.max}" step="1" value="${bounds.defaultPrice}" data-listing-price-input>`;
+        }
+
+        if (action.code === 'LIST_MARKET') {
+            const bounds = listingPriceBoundsForItem(item);
+            const pricePremium = await confirmInventoryAction({
+                title: label,
+                bodyHtml,
+                confirmLabel: label,
+                tone: action.is_destructive ? 'danger' : 'warning',
+                collectData: (modalElement) => {
+                    const priceInput = modalElement.querySelector('[data-listing-price-input]');
+                    return Number(priceInput?.value || 0);
+                },
+            });
+            if (pricePremium === false) return;
+
+            if (!Number.isFinite(pricePremium) || pricePremium < bounds.min || pricePremium > bounds.max) {
+                toast(`Informe um preco entre ${bounds.min.toLocaleString('pt-BR')} e ${bounds.max.toLocaleString('pt-BR')} 💎.`, 'error', 3200);
+                return;
+            }
+
+            actionInFlight = true;
+            try {
+                setStatus('Anunciando item...');
+                await apiFetch(
+                    `/api/items/${encodeURIComponent(item.public_id)}/actions/${encodeURIComponent(action.code)}`,
+                    { method: 'POST', body: { confirm: true, price_premium: pricePremium } }
+                );
+                toast('Item anunciado no mercado.', 'success', 3200);
+                setStatus('Sincronizado');
+                await loadInventory();
+                if (marketPanelOpen) await loadMarketListings();
+            } catch (error) {
+                handleError(error, 'Nao foi possivel anunciar o item.');
+            } finally {
+                actionInFlight = false;
+            }
+            return;
+        }
+
         const confirmed = await confirmInventoryAction({
             title: label,
-            bodyHtml: `<p>Confirmar esta acao em <strong>${escapeHtml(itemLabel(item))}</strong>?</p>`,
+            bodyHtml,
             confirmLabel: label,
             tone: action.is_destructive ? 'danger' : 'warning',
         });
         if (!confirmed) return;
+    } else if (action.code === 'LIST_MARKET') {
+        toast('Informe o preco para anunciar no mercado.', 'info', 2800);
+        return;
     }
 
     actionInFlight = true;
@@ -3652,9 +6066,33 @@ async function executeItemAction(item, action) {
 
         const data = response.data || {};
 
+        if (data.action === 'DISMANTLE') {
+            const materials = Array.isArray(data.materials) ? data.materials : [];
+            const lines = materials.map((entry) => `${entry.label} x${entry.quantity}`).join(', ');
+            toast(lines ? `Materiais recebidos: ${lines}` : 'Item desmanchado.', 'success', 4200);
+            setStatus('Sincronizado');
+            await loadInventory();
+            if (materialsPanelOpen) await loadMaterialsStash();
+            return;
+        }
+
         if (data.action === 'INSPECT') {
             toast(inspectSummary(data), 'info', 5200);
             setStatus('Sincronizado');
+            return;
+        }
+
+        if (data.action === 'SELL') {
+            toast(`Vendido por ${Number(data.gold_received || 0)} G (saldo: ${Number(data.gold_balance || 0)} G).`, 'success', 3600);
+            setStatus('Sincronizado');
+            await loadInventory();
+            return;
+        }
+
+        if (data.action === 'LIST_MARKET') {
+            toast(`Anunciado por ${Number(data.price_premium || 0)} 💎.`, 'success', 3200);
+            setStatus('Sincronizado');
+            await loadInventory();
             return;
         }
 
@@ -4048,17 +6486,35 @@ async function loadInventory() {
         }
         const characterStats = response.data?.character_stats || [];
         playerPower = response.data?.player_power || null;
+        playerWallets = response.data?.wallets || [];
+        if (marketPanelOpen) renderMarketWallets();
         inventorySummaryByPublicId = new Map(
             (summaryResponse?.data?.containers || []).map((entry) => [entry.public_id, entry])
         );
-        const visibleContainers = containers.filter(isContainerVisible);
         const summaryByPublicId = inventorySummaryByPublicId;
 
         destroyGrids();
         containerRoot.textContent = '';
+        expeditionRoot?.replaceChildren();
         renderEquipment(equipment, characterStats, equipmentLinks, activeSetBonuses);
         renderContainerDock(containers);
-        renderSummary(summaryResponse?.data || null);
+        renderSummary(summaryResponse?.data || null, playerWallets);
+        syncDrawerUi();
+
+        for (const container of containers) {
+            containerIndex.set(container.public_id, container);
+        }
+
+        const expeditionContainer = containers.find((container) => containerKind(container) === 'expedition_carry');
+        if (expeditionContainer) {
+            expeditionCarryOpen = true;
+            renderExpeditionDrawerSection(
+                expeditionContainer,
+                summaryByPublicId.get(expeditionContainer.public_id) || null
+            );
+        }
+
+        const visibleContainers = containers.filter(isRightDrawerContainerVisible);
 
         if (!visibleContainers.length) {
             containerRoot.innerHTML = '<div class="inventory-empty">Nenhum container encontrado.</div>';
@@ -4073,11 +6529,7 @@ async function loadInventory() {
             ? containers.find((container) => container.public_id === splitViewState.childPublicId)
             : null;
 
-        if (splitParent && splitChild && isContainerVisible(splitChild)) {
-            for (const container of containers) {
-                containerIndex.set(container.public_id, container);
-            }
-
+        if (splitParent && splitChild && isRightDrawerContainerVisible(splitChild)) {
             const splitSection = renderSplitLayout(splitParent, splitChild, summaryByPublicId);
             containerRoot.appendChild(splitSection);
 
@@ -4114,6 +6566,10 @@ async function loadInventory() {
             }
         }
         setStatus('Sincronizado');
+        if (craftPanelOpen) {
+            renderCraftPanel();
+            refreshCraftPreview();
+        }
     } catch (error) {
         handleError(error, 'Nao foi possivel carregar o inventario.');
     } finally {
@@ -4145,14 +6601,54 @@ document.addEventListener('keydown', (event) => {
     const target = event.target;
     const isTyping = target instanceof HTMLElement
         && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+
+    if (event.key === 'Escape') {
+        const menu = document.querySelector('[data-inventory-context-menu]');
+        if (menu && !menu.hidden) {
+            closeContextMenu();
+            return;
+        }
+        const renameModal = document.querySelector('[data-inventory-rename-modal]');
+        if (renameModal && !renameModal.hidden) {
+            closeRenameModal();
+            return;
+        }
+        if (!isTyping) {
+            event.preventDefault();
+            closeActiveDrawer();
+        }
+        return;
+    }
+
     if (isTyping || event.ctrlKey || event.metaKey || event.altKey) return;
+
     if (event.key === 'i' || event.key === 'I') {
         event.preventDefault();
-        toggleCharacterPanel();
+        toggleRightDrawer();
     }
     if (event.key === 'e' || event.key === 'E') {
         event.preventDefault();
-        toggleExpeditionPanel();
+        toggleLeftDrawer();
+    }
+    if (event.key === 'Tab') {
+        event.preventDefault();
+        alternateDrawerFocus();
+    }
+    if (event.key === 'c' || event.key === 'C') {
+        event.preventDefault();
+        toggleStatsDrawer();
+    }
+    if (event.key === 'm' || event.key === 'M') {
+        event.preventDefault();
+        toggleMarketPanel();
+    }
+    if (event.key === 'b' || event.key === 'B') {
+        event.preventDefault();
+        toggleMaterialsPanel();
+    }
+    if (event.key === 'f' || event.key === 'F') {
+        event.preventDefault();
+        toggleCraftPanel();
     }
     if (['1', '2', '3', '4'].includes(event.key)) {
         const slotCode = `potion_${event.key}`;
@@ -4170,9 +6666,7 @@ document.addEventListener('click', (event) => {
     closeContextMenu();
 });
 
-document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeContextMenu();
-});
-
+initDrawerControls();
+syncDrawerUi();
 loadInventory();
 console.info('[inventory] drag engine', INVENTORY_DRAG_ENGINE);

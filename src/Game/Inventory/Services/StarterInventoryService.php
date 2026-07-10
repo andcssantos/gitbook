@@ -26,6 +26,8 @@ class StarterInventoryService
             $placedItems = $containers->countItems($containerIds['main_inventory_level_1']);
 
             if ($placedItems > 0 || !$createStarterItems) {
+                (new \App\Game\Market\Services\PlayerCurrencyService($this->pdo()))->ensureWallets($playerId);
+
                 return [
                     'created' => false,
                     'containers' => $containerIds,
@@ -108,6 +110,8 @@ class StarterInventoryService
                 ],
             ];
         }
+
+        (new \App\Game\Market\Services\PlayerCurrencyService($this->pdo()))->ensureWallets($playerId);
 
         return [
             'created' => true,

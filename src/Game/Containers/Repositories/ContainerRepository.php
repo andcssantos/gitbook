@@ -98,6 +98,11 @@ class ContainerRepository
         return $this->items->findByItemId($itemInstanceId, $lock);
     }
 
+    public function updateInstanceName(int $containerInstanceId, ?string $name): void
+    {
+        $this->instances->updateName($containerInstanceId, $name);
+    }
+
     public function deletePlacementByItemId(int $itemInstanceId): void
     {
         $this->items->deleteByItemId($itemInstanceId);

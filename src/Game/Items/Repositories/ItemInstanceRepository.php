@@ -201,6 +201,18 @@ class ItemInstanceRepository
         ]);
     }
 
+    public function updateQuantity(int $itemInstanceId, int $quantity): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instances
+            SET quantity = :quantity,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id');
+        $stmt->execute([
+            'id' => $itemInstanceId,
+            'quantity' => max(1, $quantity),
+        ]);
+    }
+
     public function listPlacedForPlayer(int $playerId, bool $lock = false): array
     {
         $stmt = $this->pdo()->prepare('SELECT

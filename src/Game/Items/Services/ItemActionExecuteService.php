@@ -14,7 +14,7 @@ use Throwable;
 
 class ItemActionExecuteService
 {
-    private const MVP_EXECUTABLE = ['DISCARD', 'INSPECT', 'OPEN', 'EQUIP', 'UNEQUIP'];
+    private const EXECUTABLE = ['DISCARD', 'INSPECT', 'OPEN', 'EQUIP', 'UNEQUIP', 'SELL', 'LIST_MARKET', 'DISMANTLE'];
 
     public function __construct(
         private ?PDO $pdo = null,
@@ -25,14 +25,14 @@ class ItemActionExecuteService
         $this->definitions ??= new ItemActionDefinitionRepository($this->pdo);
     }
 
-    public function execute(int $playerId, string $itemPublicId, string $actionCode, bool $confirmed = false): array
+    public function execute(int $playerId, string $itemPublicId, string $actionCode, bool $confirmed = false, array $payload = []): array
     {
         $actionCode = strtoupper(trim($actionCode));
-        if (!in_array($actionCode, self::MVP_EXECUTABLE, true)) {
+        if (!in_array($actionCode, self::EXECUTABLE, true)) {
             throw new InventoryException('ITEM_ACTION_NOT_EXECUTABLE', 'This item action is not executable in MVP.', 422);
         }
 
-        return $this->transaction(function () use ($playerId, $itemPublicId, $actionCode, $confirmed): array {
+        return $this->transaction(function () use ($playerId, $itemPublicId, $actionCode, $confirmed, $payload): array {
             $items = new ItemInstanceRepository($this->pdo());
             $item = $this->loadOwnedItem($items, $itemPublicId, $playerId);
 
@@ -55,6 +55,9 @@ class ItemActionExecuteService
                 'OPEN' => $this->open($item),
                 'EQUIP' => (new EquipmentService($this->pdo()))->equip($playerId, $itemPublicId),
                 'UNEQUIP' => (new EquipmentService($this->pdo()))->unequip($playerId, $itemPublicId),
+                'SELL' => (new \App\Game\Market\Services\NpcSellService($this->pdo()))->sell($playerId, $itemPublicId),
+                'LIST_MARKET' => $this->listOnMarket($playerId, $itemPublicId, $payload),
+                'DISMANTLE' => (new \App\Game\Materials\Services\DismantleService($this->pdo()))->dismantle($playerId, $itemPublicId),
             };
         });
     }
@@ -90,6 +93,16 @@ class ItemActionExecuteService
             'item_public_id' => (string) $item['public_id'],
             'discarded' => true,
         ];
+    }
+
+    private function listOnMarket(int $playerId, string $itemPublicId, array $payload): array
+    {
+        $pricePremium = (int) ($payload['price_premium'] ?? 0);
+        if ($pricePremium <= 0) {
+            throw new InventoryException('MARKET_INVALID_LISTING_PRICE', 'Informe o preco em Eter Cristal para anunciar.', 422);
+        }
+
+        return (new \App\Game\Market\Services\MarketListingService($this->pdo()))->createListing($playerId, $itemPublicId, $pricePremium);
     }
 
     private function inspect(array $item): array

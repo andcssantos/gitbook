@@ -28,6 +28,12 @@ class ItemActionTest extends TestCase
         $itemActionMigration = require __DIR__ . '/../../../database/migrations/2026_07_09_000006_create_item_action_tables.php';
         $itemActionMigration->up($this->pdo);
 
+        $marketMigration = require __DIR__ . '/../../../database/migrations/2026_07_10_000019_create_market_economy_tables.php';
+        $marketMigration->up($this->pdo);
+
+        $marketActionsMigration = require __DIR__ . '/../../../database/migrations/2026_07_10_000020_enable_market_item_actions.php';
+        $marketActionsMigration->up($this->pdo);
+
         $seed = require __DIR__ . '/../../../database/seeds/001_evolvaxe_foundation_seed.php';
         $seed($this->pdo);
 
@@ -93,12 +99,12 @@ class ItemActionTest extends TestCase
         $this->assertNotEmpty($result['container_public_id']);
     }
 
-    public function testFutureDisabledActionCannotExecute(): void
+    public function testSellActionIsEnabledForTradeableItems(): void
     {
-        $this->assertInventoryException(
-            fn (): array => (new ItemActionExecuteService($this->pdo))->execute(1, $this->itemPublicId('wood'), 'SELL', true),
-            'ITEM_ACTION_NOT_EXECUTABLE'
-        );
+        $actions = (new ItemActionAvailabilityService($this->pdo))->listForItem($this->loadItem('wood'));
+        $codes = array_column($actions, 'code');
+
+        $this->assertContains('SELL', $codes);
     }
 
     private function loadItem(string $code): array

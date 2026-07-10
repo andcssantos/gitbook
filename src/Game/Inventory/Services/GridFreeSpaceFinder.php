@@ -13,6 +13,25 @@ class GridFreeSpaceFinder
 
     public function findFirst(array $item, array $container, array $placements, bool $rotated = false): ?array
     {
+        $orientations = [(bool) $rotated];
+        $baseWidth = (int) $item['definition_grid_w'];
+        $baseHeight = (int) $item['definition_grid_h'];
+        if ($baseWidth !== $baseHeight) {
+            $orientations[] = !$rotated;
+        }
+
+        foreach (array_values(array_unique($orientations, SORT_REGULAR)) as $tryRotated) {
+            $spot = $this->findFirstWithRotation($item, $container, $placements, $tryRotated);
+            if ($spot !== null) {
+                return $spot;
+            }
+        }
+
+        return null;
+    }
+
+    private function findFirstWithRotation(array $item, array $container, array $placements, bool $rotated): ?array
+    {
         $width = (int) $item['definition_grid_w'];
         $height = (int) $item['definition_grid_h'];
         if ($rotated) {
@@ -37,6 +56,7 @@ class GridFreeSpaceFinder
                     'grid_y' => $y,
                     'grid_w' => $width,
                     'grid_h' => $height,
+                    'rotated' => $rotated,
                 ];
             }
         }

@@ -34,6 +34,62 @@ Route::get('/api/inventory/items/{itemPublicId:string:64}', 'App/Api/InventoryCo
     ],
 ]);
 
+Route::get('/api/inventory/items/{itemPublicId:string:64}/investigate', 'App/Api/InventoryController@investigateItem', [
+    'as' => 'api.inventory.items.investigate',
+    'middleware' => [
+        'auth',
+        'rateLimit:120,60',
+    ],
+]);
+
+Route::get('/api/inventory/materials', 'App/Api/InventoryController@materials', [
+    'as' => 'api.inventory.materials',
+    'middleware' => [
+        'auth',
+        'rateLimit:120,60',
+    ],
+]);
+
+Route::get('/api/inventory/crafting/workspaces', 'App/Api/InventoryController@craftingWorkspaces', [
+    'as' => 'api.inventory.crafting.workspaces',
+    'middleware' => [
+        'auth',
+        'rateLimit:120,60',
+    ],
+]);
+
+Route::post('/api/inventory/crafting/preview', 'App/Api/InventoryController@craftingPreview', [
+    'as' => 'api.inventory.crafting.preview',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:120,60',
+        'validate:workspace=required|string|max:30,slots=required|array',
+    ],
+]);
+
+Route::post('/api/inventory/crafting/execute', 'App/Api/InventoryController@craftingExecute', [
+    'as' => 'api.inventory.crafting.execute',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:30,60',
+        'idempotency:api.inventory.crafting.execute',
+        'validate:workspace=required|string|max:30,slots=required|array',
+        'audit:inventory.crafting.execute',
+    ],
+]);
+
+Route::post('/api/inventory/crafting/recipes/share', 'App/Api/InventoryController@craftingShareRecipe', [
+    'as' => 'api.inventory.crafting.recipes.share',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:30,60',
+        'validate:recipe_code=required|string|max:80',
+    ],
+]);
+
 Route::post('/api/inventory/move', 'App/Api/InventoryController@move', [
     'as' => 'api.inventory.move',
     'middleware' => [
@@ -121,7 +177,19 @@ Route::post('/api/inventory/containers/{containerPublicId:string:64}/organize', 
         'csrf',
         'rateLimit:30,60',
         'idempotency:api.inventory.containers.organize',
+        'validate:mode=nullable|string|in:type,rarity,size,name,compact',
         'audit:inventory.organize',
+    ],
+]);
+
+Route::patch('/api/inventory/containers/{containerPublicId:string:64}/rename', 'App/Api/InventoryController@renameContainer', [
+    'as' => 'api.inventory.containers.rename',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:60,60',
+        'validate:name=nullable|string|max:48',
+        'audit:inventory.containers.rename',
     ],
 ]);
 

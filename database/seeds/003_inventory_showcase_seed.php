@@ -426,6 +426,9 @@ return function (PDO $pdo): void {
             ['showcase_sunblade', 'weapon', 10],
             ['showcase_drake_helm', 'helmet', 20],
             ['showcase_iron_cuirass', 'chest', 30],
+            ['showcase_frost_shield', 'shield', 35],
+            ['showcase_common_gloves', 'gloves', 36],
+            ['showcase_common_pants', 'pants', 37],
             ['showcase_shadow_boots', 'boots', 40],
         ];
         foreach ($pieceDefinitions as [$definitionCode, $pieceKey, $sortOrder]) {

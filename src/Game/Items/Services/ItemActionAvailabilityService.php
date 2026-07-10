@@ -2,6 +2,8 @@
 
 namespace App\Game\Items\Services;
 
+use App\Game\Market\Services\ItemMarketEligibilityService;
+use App\Game\Market\Services\MarketItemContextService;
 use App\Game\Items\Repositories\ItemActionDefinitionRepository;
 use App\Game\Items\Repositories\ItemActionRuleRepository;
 use PDO;
@@ -65,9 +67,19 @@ class ItemActionAvailabilityService
                 continue;
             }
 
-            if ($this->matches($rule, $item)) {
-                return true;
+            if (!$this->matches($rule, $item)) {
+                continue;
             }
+
+            if (in_array($actionCode, ['SELL', 'LIST_MARKET'], true) && !$this->marketEligible($actionCode, $item)) {
+                continue;
+            }
+
+            if ($actionCode === 'DISMANTLE' && !$this->dismantleEligible($item)) {
+                continue;
+            }
+
+            return true;
         }
 
         return false;
@@ -101,6 +113,39 @@ class ItemActionAvailabilityService
         ]);
 
         return $stmt->fetchColumn() !== false;
+    }
+
+    private function marketEligible(string $actionCode, array $item): bool
+    {
+        $contextItem = $this->marketContextItem($item);
+        if ($contextItem === null) {
+            return false;
+        }
+
+        $eligibility = new ItemMarketEligibilityService($this->pdo());
+
+        return $actionCode === 'SELL'
+            ? $eligibility->canSellNpc($contextItem)
+            : $eligibility->canListOnMarket($contextItem);
+    }
+
+    private function dismantleEligible(array $item): bool
+    {
+        $contextItem = $this->marketContextItem($item);
+
+        return $contextItem !== null
+            && (new \App\Game\Materials\Services\DismantleService($this->pdo()))->canDismantle($contextItem);
+    }
+
+    private function marketContextItem(array $item): ?array
+    {
+        $publicId = (string) ($item['public_id'] ?? '');
+        $playerId = (int) ($item['owner_player_id'] ?? 0);
+        if ($publicId === '' || $playerId <= 0) {
+            return null;
+        }
+
+        return (new MarketItemContextService($this->pdo()))->forOwnedItem($playerId, $publicId);
     }
 
     private function pdo(): PDO

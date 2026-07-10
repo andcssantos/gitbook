@@ -7,6 +7,9 @@ use App\Game\Containers\Services\ContainerNestingService;
 use App\Game\Equipment\Services\ExpeditionCarryCapacityService;
 use App\Game\Inventory\InventoryException;
 use App\Game\Items\Services\ItemPowerService;
+use App\Game\Items\Services\ItemStatRangeService;
+use App\Game\Market\Services\MarketPriceService;
+use App\Game\Market\Services\PlayerCurrencyService;
 use App\Support\DB;
 use PDO;
 
@@ -54,6 +57,7 @@ class InventoryStateService
             'player_power' => (new ItemPowerService())->forEquippedPlayer($equipment, $characterStats),
             'equipment_links' => $this->equipmentLinks($playerId),
             'active_set_bonuses' => $this->activeSetBonuses($playerId),
+            'wallets' => $this->walletsForPlayer($playerId),
         ];
     }
 
@@ -286,6 +290,7 @@ class InventoryStateService
                 ],
                 'allow_container_items' => (bool) $row['allow_container_items'],
                 'source_item_public_id' => $row['source_item_public_id'] !== null ? (string) $row['source_item_public_id'] : null,
+                'can_rename' => $row['source_item_instance_id'] !== null,
                 'items' => [],
             ];
         }
@@ -676,6 +681,8 @@ class InventoryStateService
         }
 
         $mapped['power'] = (new ItemPowerService())->forItem($mapped);
+        $mapped['stat_bounds'] = $this->statBoundsForItem($mapped);
+        $this->attachMarketValues($mapped);
 
         return $mapped;
     }
@@ -719,6 +726,8 @@ class InventoryStateService
         }
 
         $mapped['power'] = (new ItemPowerService())->forItem($mapped);
+        $mapped['stat_bounds'] = $this->statBoundsForItem($mapped);
+        $this->attachMarketValues($mapped);
 
         return $mapped;
     }
@@ -864,6 +873,56 @@ class InventoryStateService
         $decoded = json_decode($raw, true);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function statBoundsForItem(array $item): array
+    {
+        $service = new ItemStatRangeService();
+        $upgradeLevel = 0;
+
+        foreach ($item['properties'] ?? [] as $property) {
+            if ((string) ($property['code'] ?? '') !== 'upgrade_level') {
+                continue;
+            }
+
+            $upgradeLevel = max(0, (int) ($property['value'] ?? 0));
+            break;
+        }
+
+        $bounds = [];
+        foreach (ItemStatRangeService::BLESS_STATS as $code) {
+            $range = $service->rangeForItem($item, $code);
+            $bounds[$code] = [
+                'min' => $range['min'],
+                'max' => $range['max'],
+                'cap' => $service->allowedCapAtUpgradeLevel($item, $code, $upgradeLevel),
+            ];
+        }
+
+        return $bounds;
+    }
+
+    private function walletsForPlayer(int $playerId): array
+    {
+        if (!$this->tableExists('player_currency_wallets')) {
+            return [];
+        }
+
+        return (new PlayerCurrencyService($this->pdo()))->walletsForPlayer($playerId);
+    }
+
+    private function attachMarketValues(array &$mapped): void
+    {
+        if (!$this->tableExists('market_base_prices') && !$this->tableExists('market_listings')) {
+            return;
+        }
+
+        $quote = (new MarketPriceService($this->pdo()))->quote($mapped);
+        $mapped['market_value'] = (int) $quote['market_value'];
+        $mapped['npc_value'] = (int) $quote['npc_value'];
+        $mapped['suggested_premium'] = (int) ($quote['suggested_premium'] ?? 0);
+        $mapped['listing_price_min'] = (int) ($quote['listing_price_min'] ?? 1);
+        $mapped['listing_price_max'] = (int) ($quote['listing_price_max'] ?? 1);
     }
 
     private function pdo(): PDO

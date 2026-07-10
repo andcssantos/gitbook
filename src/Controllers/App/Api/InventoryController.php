@@ -7,16 +7,20 @@ use App\Game\Inventory\DTO\MergeStackRequest;
 use App\Game\Inventory\DTO\MoveItemRequest;
 use App\Game\Inventory\DTO\SplitStackRequest;
 use App\Game\Inventory\InventoryException;
+use App\Game\Inventory\Services\ContainerRenameService;
 use App\Game\Inventory\Services\InventoryMoveService;
 use App\Game\Inventory\Services\InventoryOrganizeService;
 use App\Game\Inventory\Services\InventoryStateService;
 use App\Game\Inventory\Services\ItemRenameService;
 use App\Game\Inventory\Services\StackMergeService;
 use App\Game\Inventory\Services\StackSplitService;
+use App\Game\Crafting\Services\CraftingWorkspaceService;
 use App\Game\Enhancement\DTO\ApplyJewelRequest;
 use App\Game\Enhancement\Services\JewelEnhancementService;
 use App\Game\Socketing\DTO\ApplyGemSocketRequest;
 use App\Game\Socketing\Services\GemSocketService;
+use App\Game\Items\Services\ItemInvestigationService;
+use App\Game\Materials\Services\PlayerMaterialStashService;
 use App\Game\Player\Services\PlayerResolver;
 use App\Http\Request;
 use App\Validation\ValidationException;
@@ -228,9 +232,34 @@ class InventoryController extends Controller
         try {
             $player = (new PlayerResolver())->requireCurrentPlayer();
             $containerPublicId = (string) ($params['containerPublicId'] ?? '');
-            $result = (new InventoryOrganizeService())->organize((int) $player['id'], $containerPublicId);
+            $payload = Request::body();
+            $mode = is_array($payload) ? (string) ($payload['mode'] ?? 'compact') : 'compact';
+            $result = (new InventoryOrganizeService())->organize((int) $player['id'], $containerPublicId, $mode);
 
             $this->success($result, 'Inventory container organized.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function renameContainer(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), [
+                'name' => 'nullable|string|max:48',
+            ]);
+
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $containerPublicId = (string) ($params['containerPublicId'] ?? '');
+            $result = (new ContainerRenameService())->rename(
+                (int) $player['id'],
+                $containerPublicId,
+                array_key_exists('name', $payload) ? (string) $payload['name'] : null
+            );
+
+            $this->success($result, 'Inventory container renamed.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
         } catch (InventoryException $e) {
             $this->fail($e->getMessage(), $e->status(), $e->errors());
         }
@@ -252,6 +281,107 @@ class InventoryController extends Controller
             );
 
             $this->success($result, 'Inventory item renamed.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function investigateItem(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $itemPublicId = (string) ($params['itemPublicId'] ?? '');
+            $report = (new ItemInvestigationService())->investigate((int) $player['id'], $itemPublicId);
+
+            $this->success($report, 'Item investigation report.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function materials(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $tab = Request::query()['tab'] ?? null;
+            $stash = (new PlayerMaterialStashService())->listForPlayer((int) $player['id'], $tab !== null ? (string) $tab : null);
+
+            $this->success($stash, 'Player material stash.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function craftingWorkspaces(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $service = new CraftingWorkspaceService();
+
+        $this->success([
+            'workspaces' => $service->workspaces(),
+            'slot_count' => 6,
+        ], 'Crafting workspaces.');
+    }
+
+    public function craftingPreview(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), [
+                'workspace' => 'required|string|max:30',
+                'slots' => 'required|array',
+            ]);
+
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $preview = (new CraftingWorkspaceService())->preview(
+                (int) $player['id'],
+                (string) $payload['workspace'],
+                (array) $payload['slots']
+            );
+
+            $this->success($preview, 'Crafting preview.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function craftingExecute(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), [
+                'workspace' => 'required|string|max:30',
+                'slots' => 'required|array',
+            ]);
+
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $result = (new CraftingWorkspaceService())->execute(
+                (int) $player['id'],
+                (string) $payload['workspace'],
+                (array) $payload['slots']
+            );
+
+            $this->success($result, 'Crafting completed.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function craftingShareRecipe(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), [
+                'recipe_code' => 'required|string|max:80',
+            ]);
+
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            (new CraftingWorkspaceService())->shareRecipe((int) $player['id'], (string) $payload['recipe_code']);
+
+            $this->success(['recipe_code' => (string) $payload['recipe_code'], 'visibility' => 'shared'], 'Receita compartilhada com todos os jogadores.');
         } catch (ValidationException $e) {
             $this->fail('Validation failed', 422, $e->errors());
         } catch (InventoryException $e) {

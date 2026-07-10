@@ -150,6 +150,18 @@ class ContainerInstanceRepository
         return (int) $this->pdo()->lastInsertId();
     }
 
+    public function updateName(int $containerInstanceId, ?string $name): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE container_instances
+            SET name = :name,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id');
+        $stmt->execute([
+            'id' => $containerInstanceId,
+            'name' => $name,
+        ]);
+    }
+
     private function pdo(): PDO
     {
         return $this->pdo ?? DB::pdo();
