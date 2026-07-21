@@ -98,8 +98,16 @@ class MarketPriceService
 
         $gems = [];
         foreach ($item['sockets'] ?? [] as $socket) {
+            if (!is_array($socket)) {
+                continue;
+            }
             if (!empty($socket['gem_item_instance_id'])) {
                 $gems[] = (string) $socket['gem_item_instance_id'];
+                continue;
+            }
+            $gemPublicId = (string) ($socket['gem']['public_id'] ?? '');
+            if ($gemPublicId !== '') {
+                $gems[] = $gemPublicId;
             }
         }
         sort($gems);
@@ -192,7 +200,15 @@ class MarketPriceService
     {
         $socketed = 0;
         foreach ($item['sockets'] ?? [] as $socket) {
+            if (!is_array($socket)) {
+                continue;
+            }
             if (!empty($socket['gem_item_instance_id'])) {
+                $socketed++;
+                continue;
+            }
+            // InventoryStateService expõe gema como objeto `gem`, nao como id interno.
+            if (!empty($socket['gem']) && is_array($socket['gem'])) {
                 $socketed++;
             }
         }

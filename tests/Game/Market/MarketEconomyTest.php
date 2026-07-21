@@ -30,6 +30,7 @@ class MarketEconomyTest extends TestCase
             '2026_07_09_000007_create_item_progression_tables.php',
             '2026_07_10_000019_create_market_economy_tables.php',
             '2026_07_10_000020_enable_market_item_actions.php',
+            '2026_07_11_000029_expedition_state_and_decimal_currency.php',
         ] as $migrationFile) {
             $migration = require __DIR__ . '/../../../database/migrations/' . $migrationFile;
             $migration->up($this->pdo);
@@ -60,6 +61,19 @@ class MarketEconomyTest extends TestCase
 
         $gold = (new PlayerCurrencyService($this->pdo))->balance(1, 'gold');
         $this->assertGreaterThanOrEqual(500 + $result['gold_received'], $gold);
+    }
+
+    public function testCurrencyLedgerStoresDecimalAmounts(): void
+    {
+        $currencies = new PlayerCurrencyService($this->pdo);
+
+        $balance = $currencies->credit(1, 'gold', 1.25, 'test_decimal_credit');
+
+        $this->assertSame(501.25, $balance);
+        $row = $this->pdo->query("SELECT amount, balance_after FROM player_currency_ledger WHERE reason_code = 'test_decimal_credit' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($row);
+        $this->assertSame(1.25, (float) $row['amount']);
+        $this->assertSame(501.25, (float) $row['balance_after']);
     }
 
     public function testPriceQuoteUsesDynamicFormula(): void

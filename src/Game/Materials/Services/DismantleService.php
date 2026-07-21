@@ -6,6 +6,7 @@ use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Inventory\InventoryException;
 use App\Game\Items\Repositories\ItemInstanceRepository;
 use App\Game\Items\Repositories\ItemMaterialCompositionRepository;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Game\Market\Services\MarketItemContextService;
 use App\Support\DB;
 use PDO;
@@ -32,6 +33,7 @@ class DismantleService
                 throw new InventoryException('INVENTORY_ITEM_NOT_FOUND', 'Inventory item was not found.', 404);
             }
 
+            (new ItemSafetyService($this->pdo()))->assertNotLocked($playerId, (int) ($item['item_instance_id'] ?? 0), 'DISMANTLE');
             $this->assertDismantleable($item);
             $yields = $this->yieldCalculator->preview($item);
             if ($yields === []) {
@@ -48,6 +50,9 @@ class DismantleService
                 );
             }
 
+            (new ItemSafetyService($this->pdo()))->record($item, $playerId, 'dismantled', [
+                'materials' => $yields,
+            ]);
             $this->removeItem($item);
 
             return [

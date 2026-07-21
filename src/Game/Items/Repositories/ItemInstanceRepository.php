@@ -213,6 +213,18 @@ class ItemInstanceRepository
         ]);
     }
 
+    public function updateDurability(int $itemInstanceId, int $currentDurability): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instances
+            SET current_durability = :current_durability,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id');
+        $stmt->execute([
+            'id' => $itemInstanceId,
+            'current_durability' => max(0, $currentDurability),
+        ]);
+    }
+
     public function listPlacedForPlayer(int $playerId, bool $lock = false): array
     {
         $stmt = $this->pdo()->prepare('SELECT
@@ -241,12 +253,13 @@ class ItemInstanceRepository
             INNER JOIN container_items ci ON ci.item_instance_id = ii.id
             INNER JOIN container_instances cinst ON cinst.id = ci.container_instance_id
             INNER JOIN container_definitions cd ON cd.id = cinst.container_definition_id
-            WHERE ii.owner_player_id = :player_id
-                AND cinst.owner_player_id = :player_id
+            WHERE ii.owner_player_id = :item_owner_player_id
+                AND cinst.owner_player_id = :container_owner_player_id
                 AND cinst.status = :status
             ORDER BY cinst.sort_order ASC, ci.grid_y ASC, ci.grid_x ASC, ci.id ASC' . $this->lockClause($lock));
         $stmt->execute([
-            'player_id' => $playerId,
+            'item_owner_player_id' => $playerId,
+            'container_owner_player_id' => $playerId,
             'status' => 'active',
         ]);
 

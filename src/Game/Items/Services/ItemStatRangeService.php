@@ -15,7 +15,7 @@ class ItemStatRangeService
         'energy',
     ];
 
-    /** @var array<string, array{0: float, 1: float}> */
+    /** @var array<string, array{0: int|float, 1: int|float}> */
     private const QUALITY_FORMULAS = [
         'attack_power' => [1 / 6, 1 / 3],
         'strength' => [1 / 6, 1 / 3],

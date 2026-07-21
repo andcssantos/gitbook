@@ -33,10 +33,10 @@ class InventoryQueryTest extends TestCase
         $summary = (new InventoryStateService($this->pdo))->summaryForPlayer(1);
 
         $this->assertSame(4, $summary['container_count']);
-        $this->assertSame(4, $summary['item_count']);
+        $this->assertSame(6, $summary['item_count']);
 
         $main = $this->summaryContainerByCode($summary, 'main_inventory_level_1');
-        $this->assertSame(4, $main['item_count']);
+        $this->assertSame(6, $main['item_count']);
         $this->assertGreaterThan(0, $main['occupied_cells']);
         $this->assertSame(60, $main['capacity_cells']);
     }
@@ -49,7 +49,7 @@ class InventoryQueryTest extends TestCase
         $result = (new InventoryStateService($this->pdo))->containerForPlayer(1, $publicId);
 
         $this->assertSame($publicId, $result['container']['public_id']);
-        $this->assertCount(4, $result['container']['items']);
+        $this->assertCount(6, $result['container']['items']);
         $this->assertArrayNotHasKey('internal_id', $result['container']);
     }
 

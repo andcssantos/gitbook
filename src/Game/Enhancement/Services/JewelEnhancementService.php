@@ -6,9 +6,11 @@ use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Enhancement\DTO\ApplyJewelRequest;
 use App\Game\Enhancement\Repositories\ItemUpgradeEventRepository;
 use App\Game\Inventory\InventoryException;
+use App\Game\Inventory\Services\InventoryStateService;
 use App\Game\Items\Repositories\ItemInstanceAffixRepository;
 use App\Game\Items\Repositories\ItemInstancePropertyRepository;
 use App\Game\Items\Repositories\ItemInstanceRepository;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Game\Socketing\Repositories\ItemInstanceSocketRepository;
 use App\Support\DB;
 use PDO;
@@ -65,9 +67,13 @@ class JewelEnhancementService
             throw new InventoryException('ENHANCEMENT_CONFIRMATION_REQUIRED', 'Enhancement requires confirmation.', 422);
         }
 
-        return $this->transaction(function () use ($request): array {
+        $result = $this->transaction(function () use ($request): array {
             $jewel = $this->loadItem($request->jewelItemPublicId, $request->playerId, true);
             $target = $this->loadItem($request->targetItemPublicId, $request->playerId, true);
+
+            $safety = new ItemSafetyService($this->pdo);
+            $safety->assertNotLocked($request->playerId, (int) $jewel['id'], 'ENHANCE_CONSUME_JEWEL');
+            $safety->assertNotLocked($request->playerId, (int) $target['id'], 'ENHANCE_TARGET');
 
             $this->assertPlacementVersion($jewel, $request->expectedJewelPlacementVersion);
             $this->assertPlacementVersion($target, $request->expectedTargetPlacementVersion);
@@ -92,6 +98,10 @@ class JewelEnhancementService
                 'preview' => $preview,
             ]);
         });
+
+        InventoryStateService::forgetCombatSnapshot($request->playerId);
+
+        return $result;
     }
 
     private function loadItem(string $publicId, int $playerId, bool $lock = false): array

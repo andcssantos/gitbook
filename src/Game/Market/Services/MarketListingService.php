@@ -7,6 +7,7 @@ use App\Game\Containers\Services\ContainerAcceptanceService;
 use App\Game\Containers\Services\ContainerNestingService;
 use App\Game\Inventory\Services\GridFreeSpaceFinder;
 use App\Game\Inventory\Services\InventoryPlacementValidator;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Support\DB;
 use App\Support\PublicId;
 use App\Utils\Config;
@@ -36,6 +37,7 @@ class MarketListingService
                 throw new \App\Game\Inventory\InventoryException('INVENTORY_ITEM_NOT_FOUND', 'Inventory item was not found.', 404);
             }
 
+            (new ItemSafetyService($this->pdo()))->assertNotLocked($playerId, (int) $item['item_instance_id'], 'LIST_MARKET');
             $this->eligibility->assertSellable($item);
             $quote = $this->pricing->quote($item);
             $bounds = $this->pricing->listingPriceBounds((int) $quote['suggested_premium']);
@@ -64,6 +66,10 @@ class MarketListingService
                 'profile_key' => (string) $quote['profile_key'],
                 'price_premium' => $pricePremium,
                 'listing_fee_premium' => $listingFee,
+            ]);
+            (new ItemSafetyService($this->pdo()))->record($item, $playerId, 'listed_market', [
+                'listing_public_id' => $listingPublicId,
+                'price_premium' => $pricePremium,
             ]);
 
             return [

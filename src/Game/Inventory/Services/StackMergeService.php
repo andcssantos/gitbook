@@ -32,6 +32,22 @@ class StackMergeService
             $target = $this->loadOwnedItem($items, $request->targetItemPublicId, $request->playerId);
 
             (new StackCompatibilityService())->assertCanMerge($source, $target, $request->quantity);
+            $sourcePlacement = $this->placementForItem((int) $source['id'], $request->playerId);
+            $targetPlacement = $this->placementForItem((int) $target['id'], $request->playerId);
+            if ($targetPlacement !== null) {
+                (new ExpeditionCarryAccessService($this->pdo()))->assertMergeAllowed($request->playerId, $sourcePlacement ?? [], $targetPlacement);
+            }
+
+            $this->assertExpectedPlacementVersion(
+                $sourcePlacement,
+                $request->expectedSourcePlacementVersion,
+                'source'
+            );
+            $this->assertExpectedPlacementVersion(
+                $targetPlacement,
+                $request->expectedTargetPlacementVersion,
+                'target'
+            );
 
             $newTargetQuantity = (int) $target['quantity'] + $request->quantity;
             $remainingSourceQuantity = (int) $source['quantity'] - $request->quantity;
@@ -55,7 +71,14 @@ class StackMergeService
                 $this->deleteSourceStack((int) $source['id']);
             } else {
                 $items->updateStack((int) $source['id'], $remainingSourceQuantity, $source['quality_value'] !== null ? (float) $source['quality_value'] : null);
+                $this->bumpPlacementVersion((int) $source['id']);
             }
+
+            $this->bumpPlacementVersion((int) $target['id']);
+            $targetPlacementAfter = $this->placementForItem((int) $target['id'], $request->playerId);
+            $sourcePlacementAfter = $remainingSourceQuantity > 0
+                ? $this->placementForItem((int) $source['id'], $request->playerId)
+                : null;
 
             return [
                 'source_item_public_id' => $request->sourceItemPublicId,
@@ -64,6 +87,12 @@ class StackMergeService
                 'source_quantity' => max(0, $remainingSourceQuantity),
                 'target_quantity' => $newTargetQuantity,
                 'target_quality_value' => $newTargetQuality,
+                'source_placement_version' => $sourcePlacementAfter !== null
+                    ? (int) ($sourcePlacementAfter['placement_version'] ?? 0)
+                    : null,
+                'target_placement_version' => $targetPlacementAfter !== null
+                    ? (int) ($targetPlacementAfter['placement_version'] ?? 0)
+                    : null,
             ];
         });
     }
@@ -87,6 +116,75 @@ class StackMergeService
         }
 
         throw new InventoryException('INVENTORY_ITEM_NOT_FOUND', 'Inventory item was not found.', 404);
+    }
+
+    private function placementForItem(int $itemInstanceId, int $playerId): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT
+                ci.container_instance_id,
+                ci.placement_version,
+                cinst.public_id AS container_public_id,
+                cd.code AS container_definition_code,
+                cd.container_type
+            FROM container_items ci
+            INNER JOIN container_instances cinst ON cinst.id = ci.container_instance_id
+            INNER JOIN container_definitions cd ON cd.id = cinst.container_definition_id
+            WHERE ci.item_instance_id = :item_instance_id
+                AND cinst.owner_player_id = :player_id
+                AND cinst.status = :status
+            LIMIT 1' . ($this->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : ''));
+        $stmt->execute([
+            'item_instance_id' => $itemInstanceId,
+            'player_id' => $playerId,
+            'status' => 'active',
+        ]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return $row;
+    }
+
+    private function assertExpectedPlacementVersion(?array $placement, ?int $expectedVersion, string $side): void
+    {
+        if ($expectedVersion === null) {
+            return;
+        }
+
+        if ($placement === null) {
+            throw new InventoryException(
+                'INVENTORY_STALE_PLACEMENT',
+                'Inventory placement version is stale.',
+                409,
+                [
+                    'side' => $side,
+                    'current_placement_version' => null,
+                ]
+            );
+        }
+
+        if ((int) ($placement['placement_version'] ?? 0) !== $expectedVersion) {
+            throw new InventoryException(
+                'INVENTORY_STALE_PLACEMENT',
+                'Inventory placement version is stale.',
+                409,
+                [
+                    'side' => $side,
+                    'current_placement_version' => (int) ($placement['placement_version'] ?? 0),
+                ]
+            );
+        }
+    }
+
+    private function bumpPlacementVersion(int $itemInstanceId): void
+    {
+        $this->pdo()->prepare(
+            'UPDATE container_items
+             SET placement_version = placement_version + 1
+             WHERE item_instance_id = :item_instance_id'
+        )->execute(['item_instance_id' => $itemInstanceId]);
     }
 
     private function transaction(callable $callback): mixed

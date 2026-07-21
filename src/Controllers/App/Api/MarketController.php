@@ -5,6 +5,7 @@ namespace App\Controllers\App\Api;
 use App\Core\Controller;
 use App\Game\Inventory\InventoryException;
 use App\Game\Market\Services\MarketListingService;
+use App\Game\Market\Services\MarketHistoryService;
 use App\Game\Market\Services\NpcSellService;
 use App\Game\Market\Services\PlayerCurrencyService;
 use App\Game\Player\Services\PlayerResolver;
@@ -79,6 +80,26 @@ class MarketController extends Controller
             $result = (new MarketListingService())->cancelListing((int) $player['id'], $listingPublicId);
 
             $this->success($result, 'Market listing cancelled.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function myListings(): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new MarketHistoryService())->myListings((int) $player['id']), 'My market listings.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function myHistory(): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new MarketHistoryService())->myTransactions((int) $player['id']), 'My market transactions.');
         } catch (InventoryException $e) {
             $this->fail($e->getMessage(), $e->status(), $e->errors());
         }

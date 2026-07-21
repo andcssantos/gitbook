@@ -7,16 +7,32 @@ use App\Game\Containers\Services\ContainerNestingService;
 use App\Game\Equipment\Services\ExpeditionCarryCapacityService;
 use App\Game\Inventory\InventoryException;
 use App\Game\Items\Services\ItemPowerService;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Game\Items\Services\ItemStatRangeService;
 use App\Game\Market\Services\MarketPriceService;
 use App\Game\Market\Services\PlayerCurrencyService;
+use App\Game\Player\Services\PlayerAttributeService;
+use App\Game\Player\Services\PlayerHudService;
 use App\Support\DB;
 use PDO;
 
 class InventoryStateService
 {
+    /** @var array<int, array<string, mixed>> */
+    private static array $combatSnapshotRequestCache = [];
+
     public function __construct(private ?PDO $pdo = null)
     {
+    }
+
+    public static function forgetCombatSnapshot(?int $playerId = null): void
+    {
+        if ($playerId === null) {
+            self::$combatSnapshotRequestCache = [];
+            return;
+        }
+
+        unset(self::$combatSnapshotRequestCache[$playerId]);
     }
 
     public function forPlayer(int $playerId): array
@@ -45,6 +61,7 @@ class InventoryStateService
 
         $equipment = $this->equipment($playerId);
         $characterStats = $this->characterStats($playerId);
+        $playerPower = (new ItemPowerService())->forEquippedPlayer($equipment, $characterStats);
 
         return [
             'containers' => array_values(array_map(function (array $container): array {
@@ -54,7 +71,8 @@ class InventoryStateService
             }, $containers)),
             'equipment' => $equipment,
             'character_stats' => $characterStats,
-            'player_power' => (new ItemPowerService())->forEquippedPlayer($equipment, $characterStats),
+            'player_power' => $playerPower,
+            'player_hud' => (new PlayerHudService($this->pdo()))->forPlayer($playerId, $playerPower),
             'equipment_links' => $this->equipmentLinks($playerId),
             'active_set_bonuses' => $this->activeSetBonuses($playerId),
             'wallets' => $this->walletsForPlayer($playerId),
@@ -97,6 +115,27 @@ class InventoryStateService
             'equipped_item_count' => count(array_filter($this->equipment($playerId), fn (array $slot): bool => $slot['item'] !== null)),
             'containers' => $containers,
         ];
+    }
+
+    public function combatSnapshotForPlayer(int $playerId): array
+    {
+        if (array_key_exists($playerId, self::$combatSnapshotRequestCache)) {
+            return self::$combatSnapshotRequestCache[$playerId];
+        }
+
+        $equipment = $this->equipment($playerId);
+        $characterStats = $this->characterStats($playerId);
+        $playerPower = (new ItemPowerService())->forEquippedPlayer($equipment, $characterStats);
+
+        $snapshot = [
+            'equipment' => $equipment,
+            'character_stats' => $characterStats,
+            'player_power' => $playerPower,
+        ];
+
+        self::$combatSnapshotRequestCache[$playerId] = $snapshot;
+
+        return $snapshot;
     }
 
     public function containerForPlayer(int $playerId, string $containerPublicId): array
@@ -159,22 +198,26 @@ class InventoryStateService
                 id.equip_slot_code,
                 id.is_container,
                 id.tradeable,
+                id.base_config,
+                ic.code AS category_code,
                 cinst.public_id AS container_public_id,
                 cinst.name AS container_name,
                 cd.code AS container_definition_code
             FROM item_instances ii
             INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+            INNER JOIN item_categories ic ON ic.id = id.category_id
             INNER JOIN container_items ci ON ci.item_instance_id = ii.id
             INNER JOIN container_instances cinst ON cinst.id = ci.container_instance_id
             INNER JOIN container_definitions cd ON cd.id = cinst.container_definition_id
             WHERE ii.public_id = :item_public_id
-                AND ii.owner_player_id = :player_id
-                AND cinst.owner_player_id = :player_id
+                AND ii.owner_player_id = :item_owner_player_id
+                AND cinst.owner_player_id = :container_owner_player_id
                 AND cinst.status = :status
             LIMIT 1');
         $stmt->execute([
             'item_public_id' => $itemPublicId,
-            'player_id' => $playerId,
+            'item_owner_player_id' => $playerId,
+            'container_owner_player_id' => $playerId,
             'status' => 'active',
         ]);
 
@@ -215,19 +258,23 @@ class InventoryStateService
                 (
                     SELECT COUNT(*)
                     FROM container_items ci
+                    INNER JOIN item_instances counted_ii ON counted_ii.id = ci.item_instance_id
                     WHERE ci.container_instance_id = cinst.id
+                      AND counted_ii.state = \'available\'
+                      AND counted_ii.quantity > 0
                 ) AS item_count
             FROM container_instances cinst
             INNER JOIN container_definitions cd ON cd.id = cinst.container_definition_id
             INNER JOIN item_instances ii ON ii.id = cinst.source_item_instance_id
             WHERE ii.public_id = :item_public_id
-                AND ii.owner_player_id = :player_id
-                AND cinst.owner_player_id = :player_id
+                AND ii.owner_player_id = :item_owner_player_id
+                AND cinst.owner_player_id = :container_owner_player_id
                 AND cinst.status = :status
             LIMIT 1');
         $stmt->execute([
             'item_public_id' => $itemPublicId,
-            'player_id' => $playerId,
+            'item_owner_player_id' => $playerId,
+            'container_owner_player_id' => $playerId,
             'status' => 'active',
         ]);
 
@@ -338,7 +385,10 @@ class InventoryStateService
                 (
                     SELECT COUNT(*)
                     FROM container_items linked_ci
+                    INNER JOIN item_instances linked_ii ON linked_ii.id = linked_ci.item_instance_id
                     WHERE linked_ci.container_instance_id = linked.id
+                      AND linked_ii.state = \'available\'
+                      AND linked_ii.quantity > 0
                 ) AS linked_container_item_count
             FROM container_items ci
             INNER JOIN item_instances ii ON ii.id = ci.item_instance_id
@@ -351,6 +401,8 @@ class InventoryStateService
             WHERE cinst.owner_player_id = :container_owner_player_id
                 AND ii.owner_player_id = :item_owner_player_id
                 AND cinst.status = :container_status
+                AND ii.state = :item_state
+                AND ii.quantity > 0
                 AND pe.item_instance_id IS NULL
             ORDER BY cinst.sort_order ASC, ci.grid_y ASC, ci.grid_x ASC, ci.id ASC');
         $stmt->execute([
@@ -358,6 +410,7 @@ class InventoryStateService
             'container_owner_player_id' => $playerId,
             'item_owner_player_id' => $playerId,
             'container_status' => 'active',
+            'item_state' => 'available',
             'linked_status' => 'active',
         ]);
 
@@ -401,7 +454,10 @@ class InventoryStateService
                 (
                     SELECT COUNT(*)
                     FROM container_items linked_ci
+                    INNER JOIN item_instances linked_ii ON linked_ii.id = linked_ci.item_instance_id
                     WHERE linked_ci.container_instance_id = linked.id
+                      AND linked_ii.state = \'available\'
+                      AND linked_ii.quantity > 0
                 ) AS linked_container_item_count
             FROM equipment_slots es
             LEFT JOIN player_equipment pe ON pe.equipment_slot_id = es.id AND pe.player_id = :player_id
@@ -432,7 +488,9 @@ class InventoryStateService
     private function characterStats(int $playerId): array
     {
         $stats = [];
+        $this->mergeStatRows($stats, $this->playerAttributeRows($playerId));
         $this->mergeStatRows($stats, $this->equipmentPropertyRows($playerId));
+        $this->mergeStatRows($stats, $this->equipmentBaseConfigGrantRows($playerId));
 
         if ($this->tableExists('item_instance_affixes')) {
             $this->mergeStatRows($stats, $this->equipmentAffixRows($playerId));
@@ -443,6 +501,69 @@ class InventoryStateService
         ksort($stats);
 
         return array_values($stats);
+    }
+
+    /**
+     * Stats declarados em item_definitions.base_config.grants_stats (ex.: poison_resist).
+     *
+     * @return list<array{code: string, name: string, unit: ?string, value: float|int}>
+     */
+    private function equipmentBaseConfigGrantRows(int $playerId): array
+    {
+        if (!$this->tableExists('player_equipment') || !$this->tableExists('item_definitions')) {
+            return [];
+        }
+
+        $stmt = $this->pdo()->prepare('SELECT id.base_config
+            FROM player_equipment pe
+            INNER JOIN equipment_slots es ON es.id = pe.equipment_slot_id
+            INNER JOIN item_instances ii ON ii.id = pe.item_instance_id
+            INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+            WHERE pe.player_id = :player_id
+              AND es.code NOT LIKE \'potion_%\'');
+        $stmt->execute(['player_id' => $playerId]);
+
+        $rows = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $config = $this->parseBaseConfig($row['base_config'] ?? null);
+            $grants = is_array($config['grants_stats'] ?? null) ? $config['grants_stats'] : [];
+            foreach ($grants as $code => $value) {
+                $statCode = strtolower(trim((string) $code));
+                if ($statCode === '') {
+                    continue;
+                }
+                $rows[] = [
+                    'code' => $statCode,
+                    'name' => ucwords(str_replace('_', ' ', $statCode)),
+                    'unit' => null,
+                    'value' => (float) $value,
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    /** @return list<array{code: string, name: string, unit: ?string, value: float|int}> */
+    private function playerAttributeRows(int $playerId): array
+    {
+        $attributes = new PlayerAttributeService($this->pdo());
+        $attributes->ensureDefaults($playerId);
+        $rows = [];
+        foreach ($attributes->listForPlayer($playerId) as $attribute) {
+            $code = (string) ($attribute['code'] ?? '');
+            if ($code === '') {
+                continue;
+            }
+            $rows[] = [
+                'code' => $code,
+                'name' => (string) ($attribute['name'] ?? $code),
+                'unit' => $attribute['unit'] ?? null,
+                'value' => (float) ($attribute['value'] ?? 0),
+            ];
+        }
+
+        return $rows;
     }
 
     private function equipmentPropertyRows(int $playerId): array
@@ -457,9 +578,11 @@ class InventoryStateService
                 ipd.unit,
                 COALESCE(iip.integer_value, iip.numeric_value, 0) AS value
             FROM player_equipment pe
+            INNER JOIN equipment_slots es ON es.id = pe.equipment_slot_id
             INNER JOIN item_instance_properties iip ON iip.item_instance_id = pe.item_instance_id
             INNER JOIN item_property_definitions ipd ON ipd.id = iip.property_definition_id
-            WHERE pe.player_id = :player_id');
+            WHERE pe.player_id = :player_id
+              AND es.code NOT LIKE \'potion_%\'');
         $stmt->execute(['player_id' => $playerId]);
 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -473,10 +596,12 @@ class InventoryStateService
                 ipd.unit,
                 iia.rolled_value AS value
             FROM player_equipment pe
+            INNER JOIN equipment_slots es ON es.id = pe.equipment_slot_id
             INNER JOIN item_instance_affixes iia ON iia.item_instance_id = pe.item_instance_id
             INNER JOIN item_affix_definitions iad ON iad.id = iia.affix_definition_id
             INNER JOIN item_property_definitions ipd ON ipd.id = iad.property_definition_id
-            WHERE pe.player_id = :player_id');
+            WHERE pe.player_id = :player_id
+              AND es.code NOT LIKE \'potion_%\'');
         $stmt->execute(['player_id' => $playerId]);
 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -650,7 +775,8 @@ class InventoryStateService
                 'equip_slot_code' => $row['equip_slot_code'] !== null ? (string) $row['equip_slot_code'] : null,
                 'is_container' => (bool) $row['is_container'],
                 'tradeable' => (bool) $row['tradeable'],
-                'category_code' => $row['category_code'] !== null ? (string) $row['category_code'] : null,
+                'base_config' => $this->parseBaseConfig($row['base_config'] ?? null),
+                'category_code' => isset($row['category_code']) ? (string) $row['category_code'] : null,
             ],
             'quantity' => (int) $row['quantity'],
             'quality_value' => $row['quality_value'] !== null ? (float) $row['quality_value'] : null,
@@ -674,6 +800,8 @@ class InventoryStateService
             'properties' => $this->propertiesForItem((int) $row['item_instance_id']),
             'affixes' => $this->affixesForItem((int) $row['item_instance_id']),
             'sockets' => $this->socketsForItem((int) $row['item_instance_id']),
+            'flags' => $this->itemFlags($row),
+            'tool_mastery' => $this->toolMasteryForItem((int) $row['item_instance_id']),
         ];
 
         if (!empty($row['linked_container_public_id'])) {
@@ -719,6 +847,8 @@ class InventoryStateService
             'properties' => $this->propertiesForItem((int) $row['item_instance_id']),
             'affixes' => $this->affixesForItem((int) $row['item_instance_id']),
             'sockets' => $this->socketsForItem((int) $row['item_instance_id']),
+            'flags' => $this->itemFlags($row),
+            'tool_mastery' => $this->toolMasteryForItem((int) $row['item_instance_id']),
         ];
 
         if (!empty($row['linked_container_public_id'])) {
@@ -748,6 +878,31 @@ class InventoryStateService
             'item_count' => (int) ($row['linked_container_item_count'] ?? 0),
             'capacity_cells' => $columns * $rows,
         ];
+    }
+
+    private function itemFlags(array $row): array
+    {
+        $itemInstanceId = (int) ($row['item_instance_id'] ?? 0);
+        if ($itemInstanceId <= 0) {
+            return [
+                'locked' => false,
+                'favorite' => false,
+                'wishlist' => false,
+                'locked_at' => null,
+                'favorited_at' => null,
+                'wishlisted_at' => null,
+            ];
+        }
+
+        return (new ItemSafetyService($this->pdo()))->flagsForItem((int) ($row['owner_player_id'] ?? $this->ownerForItem($itemInstanceId)), $itemInstanceId);
+    }
+
+    private function ownerForItem(int $itemInstanceId): int
+    {
+        $stmt = $this->pdo()->prepare('SELECT owner_player_id FROM item_instances WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $itemInstanceId]);
+
+        return (int) $stmt->fetchColumn();
     }
 
     private function propertiesForItem(int $itemInstanceId): array
@@ -828,6 +983,7 @@ class InventoryStateService
                 iis.socket_index,
                 iis.socket_type,
                 iis.status,
+                gem.id AS gem_item_instance_id,
                 gem.public_id AS gem_public_id,
                 gem_def.code AS gem_definition_code,
                 gem_def.name AS gem_name
@@ -843,12 +999,44 @@ class InventoryStateService
             'index' => (int) $row['socket_index'],
             'type' => (string) $row['socket_type'],
             'status' => (string) $row['status'],
+            'gem_item_instance_id' => $row['gem_item_instance_id'] !== null ? (int) $row['gem_item_instance_id'] : null,
             'gem' => $row['gem_public_id'] !== null ? [
                 'public_id' => (string) $row['gem_public_id'],
                 'definition_code' => (string) $row['gem_definition_code'],
                 'name' => (string) $row['gem_name'],
             ] : null,
         ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private function toolMasteryForItem(int $itemInstanceId): ?array
+    {
+        if (!$this->tableExists('tool_mastery')) {
+            return null;
+        }
+
+        $stmt = $this->pdo()->prepare('SELECT tool_type, level, xp, uses_count, last_used_at
+            FROM tool_mastery
+            WHERE item_instance_id = :item_instance_id
+            LIMIT 1');
+        $stmt->execute(['item_instance_id' => $itemInstanceId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $level = max(1, (int) $row['level']);
+        $xp = max(0, (int) $row['xp']);
+        $xpNext = 80 + (($level - 1) * 45);
+
+        return [
+            'tool_type' => (string) $row['tool_type'],
+            'level' => $level,
+            'xp' => $xp,
+            'xp_next' => $xpNext,
+            'xp_ratio' => round(min(1, $xp / $xpNext), 4),
+            'uses_count' => (int) $row['uses_count'],
+            'last_used_at' => $row['last_used_at'] !== null ? (string) $row['last_used_at'] : null,
+        ];
     }
 
     private function tableExists(string $table): bool

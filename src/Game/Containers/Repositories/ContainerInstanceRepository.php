@@ -14,7 +14,11 @@ class ContainerInstanceRepository
 
     public function findByOwnerAndDefinitionCode(int $playerId, string $definitionCode): ?array
     {
-        $stmt = $this->pdo()->prepare('SELECT ci.* FROM container_instances ci INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id WHERE ci.owner_player_id = :player_id AND cd.code = :code AND ci.status = :status LIMIT 1');
+        $stmt = $this->pdo()->prepare('SELECT ci.*, cd.code AS definition_code, cd.container_type, cd.allow_container_items
+            FROM container_instances ci
+            INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id
+            WHERE ci.owner_player_id = :player_id AND cd.code = :code AND ci.status = :status
+            LIMIT 1');
         $stmt->execute([
             'player_id' => $playerId,
             'code' => $definitionCode,

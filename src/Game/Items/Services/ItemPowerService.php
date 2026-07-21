@@ -35,8 +35,18 @@ class ItemPowerService
         'life_steal' => 22.0,
         'movement_speed' => 14.0,
         'gold_find' => 8.0,
+        'experience_gain' => 10.0,
         'experience_bonus' => 10.0,
         'expedition_carry_bonus' => 24.0,
+        'attack_speed' => 16.0,
+        'dodge_chance' => 20.0,
+        'loot_pickup_radius' => 36.0,
+        'item_rarity_bonus' => 12.0,
+        'chest_find_chance' => 10.0,
+        'map_duration_bonus' => 8.0,
+        'monster_spawn_bonus' => 10.0,
+        'monster_rare_chance' => 14.0,
+        'monster_elite_chance' => 12.0,
     ];
 
     /** @var array<string> */
@@ -97,11 +107,22 @@ class ItemPowerService
             $byCode[(string) ($stat['code'] ?? '')] = (float) ($stat['value'] ?? 0);
         }
 
+        // Poder total = equipamentos + contribuicao dos atributos de combate.
+        $attributeTotal = (int) round(
+            (($byCode['strength'] ?? 0) * (self::STAT_WEIGHT['strength'] ?? 2.4))
+            + (($byCode['defense'] ?? 0) * (self::STAT_WEIGHT['defense'] ?? 2.0))
+            + (($byCode['agility'] ?? 0) * (self::STAT_WEIGHT['agility'] ?? 1.4))
+            + (($byCode['energy'] ?? 0) * (self::STAT_WEIGHT['energy'] ?? 1.1))
+        );
+
         return [
             'attack' => (int) round(($byCode['attack_power'] ?? 0) + ($byCode['strength'] ?? 0)),
             'armor' => (int) round(($byCode['armor'] ?? 0) + ($byCode['defense'] ?? 0)),
             'life' => (int) round(($byCode['max_health'] ?? 0) + (($byCode['vitality'] ?? 0) * 2)),
-            'total' => $total,
+            'agility' => (int) round($byCode['agility'] ?? 0),
+            'equipment_total' => $total,
+            'attribute_total' => $attributeTotal,
+            'total' => $total + $attributeTotal,
         ];
     }
 

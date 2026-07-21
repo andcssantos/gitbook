@@ -30,10 +30,10 @@ class StarterInventoryServiceTest extends TestCase
         $result = (new StarterInventoryService($this->pdo))->ensureForPlayer(1);
 
         $this->assertTrue($result['created']);
-        $this->assertSame(4, $result['placed_items']);
+        $this->assertSame(6, $result['placed_items']);
         $this->assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM container_instances')->fetchColumn());
-        $this->assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM item_instances')->fetchColumn());
-        $this->assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM container_items')->fetchColumn());
+        $this->assertSame(6, (int) $this->pdo->query('SELECT COUNT(*) FROM item_instances')->fetchColumn());
+        $this->assertSame(6, (int) $this->pdo->query('SELECT COUNT(*) FROM container_items')->fetchColumn());
 
         $backpackContainers = (int) $this->pdo->query('SELECT COUNT(*) FROM container_instances WHERE source_item_instance_id IS NOT NULL')->fetchColumn();
         $this->assertSame(1, $backpackContainers);
@@ -49,8 +49,8 @@ class StarterInventoryServiceTest extends TestCase
         $this->assertTrue($first['created']);
         $this->assertFalse($second['created']);
         $this->assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM container_instances')->fetchColumn());
-        $this->assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM item_instances')->fetchColumn());
-        $this->assertSame(4, (int) $this->pdo->query('SELECT COUNT(*) FROM container_items')->fetchColumn());
+        $this->assertSame(6, (int) $this->pdo->query('SELECT COUNT(*) FROM item_instances')->fetchColumn());
+        $this->assertSame(6, (int) $this->pdo->query('SELECT COUNT(*) FROM container_items')->fetchColumn());
     }
 
     public function testStarterPlacementsUseExpectedLogicalGridCoordinates(): void
@@ -61,6 +61,8 @@ class StarterInventoryServiceTest extends TestCase
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $this->assertSame([
+            ['code' => 'simple_hatchet', 'grid_x' => 7, 'grid_y' => 0, 'grid_w' => 2, 'grid_h' => 2],
+            ['code' => 'simple_magnifier', 'grid_x' => 6, 'grid_y' => 0, 'grid_w' => 1, 'grid_h' => 1],
             ['code' => 'small_leather_backpack', 'grid_x' => 4, 'grid_y' => 0, 'grid_w' => 2, 'grid_h' => 2],
             ['code' => 'stone', 'grid_x' => 3, 'grid_y' => 0, 'grid_w' => 1, 'grid_h' => 1],
             ['code' => 'stone_pickaxe', 'grid_x' => 0, 'grid_y' => 0, 'grid_w' => 2, 'grid_h' => 3],

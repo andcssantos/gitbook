@@ -42,7 +42,14 @@ class CraftingRecipeMatcherService
             ];
         }
 
-        usort($matches, fn (array $a, array $b): int => $b['score'] <=> $a['score']);
+        usort($matches, function (array $a, array $b): int {
+            $completeCompare = (int) ($b['is_complete'] ?? false) <=> (int) ($a['is_complete'] ?? false);
+            if ($completeCompare !== 0) {
+                return $completeCompare;
+            }
+
+            return ($b['score'] ?? 0) <=> ($a['score'] ?? 0);
+        });
 
         $best = $matches[0] ?? null;
         $filledCount = count(array_filter($resolvedSlots, fn ($slot): bool => is_array($slot)));
@@ -67,6 +74,8 @@ class CraftingRecipeMatcherService
     {
         $itemsByDefinition = [];
         $materialsByFamily = [];
+        $materialsByFamilyStacks = [];
+        $materialsByOrigin = [];
         $qualities = [];
         $totalUnits = 0;
 
@@ -82,8 +91,13 @@ class CraftingRecipeMatcherService
 
             if (($slot['source_kind'] ?? '') === 'material_stack') {
                 $family = (string) ($slot['family_code'] ?? $slot['material_family_code'] ?? '');
+                $origin = (string) ($slot['origin_code'] ?? '');
                 if ($family !== '') {
                     $materialsByFamily[$family] = ($materialsByFamily[$family] ?? 0) + $qty;
+                    $materialsByFamilyStacks[$family] = ($materialsByFamilyStacks[$family] ?? 0) + $qty;
+                }
+                if ($origin !== '') {
+                    $materialsByOrigin[$origin] = ($materialsByOrigin[$origin] ?? 0) + $qty;
                 }
                 continue;
             }
@@ -102,6 +116,8 @@ class CraftingRecipeMatcherService
         return [
             'items_by_definition' => $itemsByDefinition,
             'materials_by_family' => $materialsByFamily,
+            'materials_by_family_stacks' => $materialsByFamilyStacks,
+            'materials_by_origin' => $materialsByOrigin,
             'qualities' => $qualities,
             'average_quality_rank' => $this->averageQualityRank($qualities),
             'total_units' => $totalUnits,
@@ -130,6 +146,12 @@ class CraftingRecipeMatcherService
             $available = match ($kind) {
                 'item_definition' => (int) ($pool['items_by_definition'][(string) ($requirement['definition_code'] ?? '')] ?? 0),
                 'material_family' => (int) ($pool['materials_by_family'][(string) ($requirement['family_code'] ?? '')] ?? 0),
+                'material_origin' => (int) ($pool['materials_by_origin'][(string) ($requirement['origin_code'] ?? '')] ?? 0),
+                'material_origin_any' => $this->sumOrigins($pool, (array) ($requirement['origin_codes'] ?? [])),
+                'material_origin_any_or_family' => max(
+                    $this->sumOrigins($pool, (array) ($requirement['origin_codes'] ?? [])),
+                    (int) ($pool['materials_by_family_stacks'][(string) ($requirement['family_code'] ?? '')] ?? 0)
+                ),
                 default => 0,
             };
 
@@ -242,6 +264,20 @@ class CraftingRecipeMatcherService
             'discovery' => (string) ($recipe['discovery'] ?? 'public'),
             'outputs' => (array) ($recipe['outputs'] ?? []),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $pool
+     * @param array<int, string> $originCodes
+     */
+    private function sumOrigins(array $pool, array $originCodes): int
+    {
+        $sum = 0;
+        foreach ($originCodes as $originCode) {
+            $sum += (int) ($pool['materials_by_origin'][(string) $originCode] ?? 0);
+        }
+
+        return $sum;
     }
 
     /**

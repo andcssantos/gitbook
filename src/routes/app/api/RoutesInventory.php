@@ -182,6 +182,25 @@ Route::post('/api/inventory/containers/{containerPublicId:string:64}/organize', 
     ],
 ]);
 
+Route::post('/api/inventory/containers/{containerPublicId:string:64}/expand', 'App/Api/InventoryController@expandContainer', [
+    'as' => 'api.inventory.containers.expand',
+    'middleware' => [
+        'auth',
+        'csrf',
+        'rateLimit:20,60',
+        'idempotency:api.inventory.containers.expand',
+        'audit:inventory.expand',
+    ],
+]);
+
+Route::get('/api/inventory/containers/{containerPublicId:string:64}/expand', 'App/Api/InventoryController@expandContainerPreview', [
+    'as' => 'api.inventory.containers.expand.preview',
+    'middleware' => [
+        'auth',
+        'rateLimit:60,60',
+    ],
+]);
+
 Route::patch('/api/inventory/containers/{containerPublicId:string:64}/rename', 'App/Api/InventoryController@renameContainer', [
     'as' => 'api.inventory.containers.rename',
     'middleware' => [
@@ -203,3 +222,21 @@ Route::patch('/api/inventory/items/{itemPublicId:string:64}/rename', 'App/Api/In
         'audit:inventory.rename',
     ],
 ]);
+
+Route::get('/api/inventory/sets/codex', 'App/Api/InventoryController@setCodex', ['as' => 'api.inventory.sets.codex', 'middleware' => ['auth', 'rateLimit:120,60']]);
+Route::post('/api/inventory/sets/wishlist', 'App/Api/InventoryController@toggleSetWishlist', ['as' => 'api.inventory.sets.wishlist', 'middleware' => ['auth', 'csrf', 'rateLimit:60,60', 'validate:definition_code=required|string|max:80,wishlisted=required|boolean']]);
+
+Route::get('/api/inventory/loadouts', 'App/Api/InventoryController@loadouts', ['as' => 'api.inventory.loadouts', 'middleware' => ['auth', 'rateLimit:120,60']]);
+Route::post('/api/inventory/loadouts', 'App/Api/InventoryController@saveLoadout', ['as' => 'api.inventory.loadouts.store', 'middleware' => ['auth', 'csrf', 'rateLimit:30,60', 'idempotency:api.inventory.loadouts.store', 'validate:slot_index=required|int|min:0|max:4,name=required|string|max:48', 'audit:inventory.loadouts.save']]);
+Route::post('/api/inventory/loadouts/save', 'App/Api/InventoryController@saveLoadout', ['as' => 'api.inventory.loadouts.save', 'middleware' => ['auth', 'csrf', 'rateLimit:30,60', 'idempotency:api.inventory.loadouts.save', 'validate:slot_index=required|int|min:0|max:4,name=required|string|max:48', 'audit:inventory.loadouts.save']]);
+Route::post('/api/inventory/loadouts/apply', 'App/Api/InventoryController@applyLoadout', ['as' => 'api.inventory.loadouts.apply', 'middleware' => ['auth', 'csrf', 'rateLimit:30,60', 'idempotency:api.inventory.loadouts.apply', 'validate:loadout_public_id=required|string|max:64', 'audit:inventory.loadouts.apply']]);
+
+Route::post('/api/inventory/socket/unsocket/preview', 'App/Api/InventoryController@unsocketPreview', ['as' => 'api.inventory.socket.unsocket.preview', 'middleware' => ['auth', 'csrf', 'rateLimit:120,60', 'validate:target_item_public_id=required|string|max:64,socket_index=required|int|min:0']]);
+Route::post('/api/inventory/socket/unsocket', 'App/Api/InventoryController@unsocket', ['as' => 'api.inventory.socket.unsocket', 'middleware' => ['auth', 'csrf', 'rateLimit:30,60', 'idempotency:api.inventory.socket.unsocket', 'validate:target_item_public_id=required|string|max:64,socket_index=required|int|min:0,confirm=required|boolean', 'audit:inventory.socket.unsocket']]);
+
+Route::get('/api/inventory/crafting/recipes', 'App/Api/InventoryController@craftingRecipes', ['as' => 'api.inventory.crafting.recipes', 'middleware' => ['auth', 'rateLimit:120,60']]);
+Route::get('/api/inventory/stash-vault', 'App/Api/InventoryController@stashVault', ['as' => 'api.inventory.stash-vault', 'middleware' => ['auth', 'rateLimit:120,60']]);
+
+Route::get('/api/inventory/exploration-loadout', 'App/Api/InventoryController@explorationLoadout', ['as' => 'api.inventory.exploration-loadout', 'middleware' => ['auth', 'rateLimit:120,60']]);
+Route::put('/api/inventory/exploration-loadout', 'App/Api/InventoryController@saveExplorationLoadout', ['as' => 'api.inventory.exploration-loadout.save', 'middleware' => ['auth', 'csrf', 'rateLimit:30,60', 'validate:backpack_item_public_id=nullable|string|max:64,tool_item_public_ids=nullable|array,potion_item_public_ids=nullable|array,notes=nullable|string|max:180', 'audit:inventory.exploration-loadout.save']]);
+Route::post('/api/inventory/exploration-loadout/apply', 'App/Api/InventoryController@applyExplorationLoadout', ['as' => 'api.inventory.exploration-loadout.apply', 'middleware' => ['auth', 'csrf', 'rateLimit:30,60', 'idempotency:api.inventory.exploration-loadout.apply', 'audit:inventory.exploration-loadout.apply']]);

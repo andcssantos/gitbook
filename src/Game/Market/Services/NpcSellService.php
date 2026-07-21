@@ -5,6 +5,7 @@ namespace App\Game\Market\Services;
 use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Items\Repositories\ItemInstanceRepository;
 use App\Game\Items\Repositories\ItemMaterialCompositionRepository;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Support\DB;
 use PDO;
 use Throwable;
@@ -32,26 +33,45 @@ class NpcSellService
                 throw new \App\Game\Inventory\InventoryException('INVENTORY_ITEM_NOT_FOUND', 'Inventory item was not found.', 404);
             }
 
+            (new ItemSafetyService($this->pdo()))->assertNotLocked($playerId, (int) $item['item_instance_id'], 'SELL');
             $this->eligibility->assertSellable($item);
             $quote = $this->pricing->quote($item);
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $totalNpcValue = max(1, (int) $quote['npc_value'] * $quantity);
+            $totalMarketValue = max(1, (int) $quote['market_value'] * $quantity);
             $this->pricing->recordHistory((int) $item['item_instance_id'], $quote);
 
+            (new ItemSafetyService($this->pdo()))->record($item, $playerId, 'sold_npc', [
+                'quantity' => $quantity,
+                'unit_npc_value' => (int) $quote['npc_value'],
+                'unit_market_value' => (int) $quote['market_value'],
+                'npc_value' => $totalNpcValue,
+                'market_value' => $totalMarketValue,
+            ]);
             $this->removeItem($item);
             $goldBalance = $this->currencies->credit(
                 $playerId,
                 'gold',
-                (int) $quote['npc_value'],
+                $totalNpcValue,
                 'npc_sell',
                 'item',
                 $itemPublicId,
-                ['market_value' => $quote['market_value']]
+                [
+                    'quantity' => $quantity,
+                    'unit_npc_value' => (int) $quote['npc_value'],
+                    'unit_market_value' => (int) $quote['market_value'],
+                    'market_value' => $totalMarketValue,
+                ]
             );
 
             return [
                 'action' => 'SELL',
                 'item_public_id' => $itemPublicId,
-                'gold_received' => (int) $quote['npc_value'],
-                'market_value' => (int) $quote['market_value'],
+                'quantity' => $quantity,
+                'gold_received' => $totalNpcValue,
+                'market_value' => $totalMarketValue,
+                'unit_npc_value' => (int) $quote['npc_value'],
+                'unit_market_value' => (int) $quote['market_value'],
                 'gold_balance' => $goldBalance,
                 'breakdown' => $quote['breakdown'],
             ];
@@ -67,13 +87,19 @@ class NpcSellService
 
         $quote = $this->pricing->quote($item);
         $reason = $this->eligibility->evaluate($item);
+        $quantity = max(1, (int) ($item['quantity'] ?? 1));
+        $totalNpcValue = max(1, (int) $quote['npc_value'] * $quantity);
+        $totalMarketValue = max(1, (int) $quote['market_value'] * $quantity);
 
         return [
             'item_public_id' => $itemPublicId,
             'sellable' => $reason === null,
             'blocked_reason' => $reason,
-            'market_value' => (int) $quote['market_value'],
-            'npc_value' => (int) $quote['npc_value'],
+            'quantity' => $quantity,
+            'market_value' => $totalMarketValue,
+            'npc_value' => $totalNpcValue,
+            'unit_market_value' => (int) $quote['market_value'],
+            'unit_npc_value' => (int) $quote['npc_value'],
             'npc_rate' => (float) $quote['npc_rate'],
             'breakdown' => $quote['breakdown'],
         ];

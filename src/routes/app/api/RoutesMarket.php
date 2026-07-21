@@ -18,6 +18,16 @@ Route::get('/api/market/listings', 'App/Api/MarketController@listings', [
     ],
 ]);
 
+Route::get('/api/market/me/listings', 'App/Api/MarketController@myListings', [
+    'as' => 'api.market.me.listings',
+    'middleware' => ['auth', 'rateLimit:120,60'],
+]);
+
+Route::get('/api/market/me/history', 'App/Api/MarketController@myHistory', [
+    'as' => 'api.market.me.history',
+    'middleware' => ['auth', 'rateLimit:120,60'],
+]);
+
 Route::get('/api/market/items/{itemPublicId:string:64}/price-preview', 'App/Api/MarketController@pricePreview', [
     'as' => 'api.market.items.price-preview',
     'middleware' => [

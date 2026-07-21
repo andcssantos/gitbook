@@ -4,6 +4,7 @@ namespace App\Game\Equipment\Services;
 
 use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Inventory\Services\InventoryAutoPlacementService;
+use App\Game\Inventory\Services\InventoryStateService;
 use App\Game\Inventory\InventoryException;
 use App\Game\Items\Repositories\ItemInstanceRepository;
 use App\Support\DB;
@@ -16,9 +17,9 @@ class EquipmentService
     {
     }
 
-    public function equip(int $playerId, string $itemPublicId): array
+    public function equip(int $playerId, string $itemPublicId, ?string $preferredSlotCode = null): array
     {
-        return $this->transaction(function () use ($playerId, $itemPublicId): array {
+        $result = $this->transaction(function () use ($playerId, $itemPublicId, $preferredSlotCode): array {
             $items = new ItemInstanceRepository($this->pdo());
             $item = $items->findByPublicIdAndOwner($itemPublicId, $playerId, true);
             if ($item === null) {
@@ -30,18 +31,25 @@ class EquipmentService
                 throw new InventoryException('EQUIPMENT_ITEM_NOT_EQUIPPABLE', 'This item cannot be equipped.', 422);
             }
 
-            if ($slotCode !== 'potion' && ((int) ($item['stackable'] ?? 0) === 1 || (int) ($item['quantity'] ?? 1) !== 1)) {
+            if (!in_array($slotCode, ['potion', 'consumable'], true)
+                && ((int) ($item['stackable'] ?? 0) === 1 || (int) ($item['quantity'] ?? 1) !== 1)
+            ) {
                 throw new InventoryException('EQUIPMENT_STACK_NOT_EQUIPPABLE', 'Stacked items cannot be equipped.', 422);
             }
 
-            $slot = $this->availableSlotForItem($playerId, $item, $slotCode);
+            $slot = $this->resolveTargetSlot($playerId, $item, $slotCode, $preferredSlotCode);
             if ($slot === null) {
                 throw new InventoryException('EQUIPMENT_SLOT_NOT_AVAILABLE', 'No compatible equipment slot is available.', 409);
             }
 
             $existing = $this->equippedInSlot($playerId, (int) $slot['id'], true);
             if ($existing !== null && (int) $existing['item_instance_id'] !== (int) $item['id']) {
-                throw new InventoryException('EQUIPMENT_SLOT_OCCUPIED', 'Unequip the current item before equipping another one in this slot.', 409);
+                if ($preferredSlotCode === null || $preferredSlotCode === '') {
+                    throw new InventoryException('EQUIPMENT_SLOT_OCCUPIED', 'Unequip the current item before equipping another one in this slot.', 409);
+                }
+
+                $this->forceUnequipOccupiedSlot($playerId, $existing);
+                $existing = null;
             }
 
             $containers = new ContainerRepository($this->pdo());
@@ -67,11 +75,146 @@ class EquipmentService
                 'expedition_carry' => $expeditionCarry,
             ];
         });
+
+        InventoryStateService::forgetCombatSnapshot($playerId);
+
+        return $result;
+    }
+
+    public function swapSlots(int $playerId, string $fromSlotCode, string $toSlotCode): array
+    {
+        $result = $this->transaction(function () use ($playerId, $fromSlotCode, $toSlotCode): array {
+            $fromCode = trim($fromSlotCode);
+            $toCode = trim($toSlotCode);
+            if ($fromCode === '' || $toCode === '' || $fromCode === $toCode) {
+                throw new InventoryException('EQUIPMENT_SWAP_INVALID', 'Select two different equipment slots to swap.', 422);
+            }
+
+            $fromSlot = $this->slotByCode($fromCode);
+            $toSlot = $this->slotByCode($toCode);
+            if ($fromSlot === null || $toSlot === null) {
+                throw new InventoryException('EQUIPMENT_SLOT_NOT_AVAILABLE', 'Equipment slot was not found.', 404);
+            }
+
+            if (!$this->slotsAreSwappable((string) $fromSlot['code'], (string) $toSlot['code'])) {
+                throw new InventoryException('EQUIPMENT_SWAP_INCOMPATIBLE', 'These equipment slots cannot be swapped.', 422);
+            }
+
+            $fromEquip = $this->equippedInSlot($playerId, (int) $fromSlot['id'], true);
+            $toEquip = $this->equippedInSlot($playerId, (int) $toSlot['id'], true);
+            if ($fromEquip === null && $toEquip === null) {
+                throw new InventoryException('EQUIPMENT_SWAP_EMPTY', 'Both slots are empty.', 422);
+            }
+
+            $fromItemId = $fromEquip !== null ? (int) $fromEquip['item_instance_id'] : null;
+            $toItemId = $toEquip !== null ? (int) $toEquip['item_instance_id'] : null;
+
+            if ($fromEquip !== null) {
+                $delete = $this->pdo()->prepare('DELETE FROM player_equipment WHERE player_id = :player_id AND equipment_slot_id = :slot_id');
+                $delete->execute(['player_id' => $playerId, 'slot_id' => (int) $fromSlot['id']]);
+            }
+            if ($toEquip !== null) {
+                $delete = $this->pdo()->prepare('DELETE FROM player_equipment WHERE player_id = :player_id AND equipment_slot_id = :slot_id');
+                $delete->execute(['player_id' => $playerId, 'slot_id' => (int) $toSlot['id']]);
+            }
+
+            $insert = $this->pdo()->prepare('INSERT INTO player_equipment (player_id, equipment_slot_id, item_instance_id) VALUES (:player_id, :equipment_slot_id, :item_instance_id)');
+            if ($toItemId !== null) {
+                $insert->execute([
+                    'player_id' => $playerId,
+                    'equipment_slot_id' => (int) $fromSlot['id'],
+                    'item_instance_id' => $toItemId,
+                ]);
+            }
+            if ($fromItemId !== null) {
+                $insert->execute([
+                    'player_id' => $playerId,
+                    'equipment_slot_id' => (int) $toSlot['id'],
+                    'item_instance_id' => $fromItemId,
+                ]);
+            }
+
+            return [
+                'action' => 'SWAP_SLOTS',
+                'from_slot' => (string) $fromSlot['code'],
+                'to_slot' => (string) $toSlot['code'],
+            ];
+        });
+
+        InventoryStateService::forgetCombatSnapshot($playerId);
+
+        return $result;
+    }
+
+    private function resolveTargetSlot(int $playerId, array $item, string $slotCode, ?string $preferredSlotCode): ?array
+    {
+        $preferred = trim((string) ($preferredSlotCode ?? ''));
+        if ($preferred === '') {
+            return $this->availableSlotForItem($playerId, $item, $slotCode);
+        }
+
+        $compatible = $this->compatibleSlotCodes($slotCode, $item);
+        if (!in_array($preferred, $compatible, true)) {
+            throw new InventoryException('EQUIPMENT_SLOT_INCOMPATIBLE', 'This item cannot use the selected equipment slot.', 422);
+        }
+
+        $slot = $this->slotByCode($preferred);
+        if ($slot === null) {
+            return null;
+        }
+
+        (new EquipmentConflictService($this->pdo()))->assertCanEquip($playerId, $item, $preferred);
+
+        return $slot;
+    }
+
+    private function forceUnequipOccupiedSlot(int $playerId, array $equippedRow): void
+    {
+        $items = new ItemInstanceRepository($this->pdo());
+        $existingItem = $items->findById((int) $equippedRow['item_instance_id'], true);
+        if ($existingItem === null) {
+            $delete = $this->pdo()->prepare('DELETE FROM player_equipment WHERE player_id = :player_id AND equipment_slot_id = :slot_id');
+            $delete->execute([
+                'player_id' => $playerId,
+                'slot_id' => (int) $equippedRow['equipment_slot_id'],
+            ]);
+            return;
+        }
+
+        $capacity = new ExpeditionCarryCapacityService($this->pdo());
+        $capacity->assertCanUnequipItem($playerId, $existingItem);
+
+        $delete = $this->pdo()->prepare('DELETE FROM player_equipment WHERE player_id = :player_id AND equipment_slot_id = :slot_id AND item_instance_id = :item_instance_id');
+        $delete->execute([
+            'player_id' => $playerId,
+            'slot_id' => (int) $equippedRow['equipment_slot_id'],
+            'item_instance_id' => (int) $existingItem['id'],
+        ]);
+
+        (new ContainerRepository($this->pdo()))->deletePlacementByItemId((int) $existingItem['id']);
+        $capacity->restoreBackpackContentsAfterUnequip($playerId, $existingItem);
+        (new InventoryAutoPlacementService($this->pdo()))->autoPlaceExistingItem($playerId, $existingItem);
+        $capacity->resetAfterUnequip($playerId, $existingItem);
+    }
+
+    private function slotsAreSwappable(string $fromCode, string $toCode): bool
+    {
+        $potionSlots = ['potion_1', 'potion_2', 'potion_3', 'potion_4'];
+        if (in_array($fromCode, $potionSlots, true) && in_array($toCode, $potionSlots, true)) {
+            return true;
+        }
+
+        $ringSlots = ['ring', 'ring_2'];
+        if (in_array($fromCode, $ringSlots, true) && in_array($toCode, $ringSlots, true)) {
+            return true;
+        }
+
+        return false;
     }
 
     public function unequip(int $playerId, string $itemPublicId): array
     {
-        return $this->transaction(function () use ($playerId, $itemPublicId): array {
+        $result = $this->transaction(function () use ($playerId, $itemPublicId): array {
             $items = new ItemInstanceRepository($this->pdo());
             $item = $items->findByPublicIdAndOwner($itemPublicId, $playerId, true);
             if ($item === null) {
@@ -121,6 +264,10 @@ class EquipmentService
                 'expedition_carry' => $expeditionCarry,
             ];
         });
+
+        InventoryStateService::forgetCombatSnapshot($playerId);
+
+        return $result;
     }
 
     private function slotByCode(string $slotCode): ?array
@@ -171,7 +318,7 @@ class EquipmentService
     {
         return match ($slotCode) {
             'ring' => ['ring', 'ring_2'],
-            'potion' => ['potion_1', 'potion_2', 'potion_3', 'potion_4'],
+            'potion', 'consumable' => ['potion_1', 'potion_2', 'potion_3', 'potion_4'],
             'weapon' => (new EquipmentConflictService($this->pdo()))->isTwoHanded($item) ? ['weapon'] : ['weapon', 'weapon_offhand'],
             default => [$slotCode],
         };

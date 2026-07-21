@@ -72,6 +72,11 @@ class ItemPowerServiceTest extends TestCase
         $this->assertSame(18, $power['attack']);
         $this->assertSame(30, $power['armor']);
         $this->assertSame(40, $power['life']);
-        $this->assertGreaterThan(0, $power['total']);
+        $this->assertGreaterThan(0, (int) ($power['equipment_total'] ?? 0));
+        $this->assertArrayHasKey('attribute_total', $power);
+        $this->assertSame(
+            (int) $power['equipment_total'] + (int) $power['attribute_total'],
+            (int) $power['total']
+        );
     }
 }

@@ -15,10 +15,16 @@ class ContainerPriorityService
 
     public function __construct(
         private ?ContainerAcceptanceService $acceptance = null,
-        private ?ContainerAcceptanceRuleRepository $rules = null
+        private ?ContainerAcceptanceRuleRepository $rules = null,
+        private bool $preferExpeditionCarry = false
     ) {
         $this->acceptance ??= new ContainerAcceptanceService();
         $this->rules ??= new ContainerAcceptanceRuleRepository();
+    }
+
+    public function withPreferExpeditionCarry(bool $prefer): self
+    {
+        return new self($this->acceptance, $this->rules, $prefer);
     }
 
     public function isEligibleForAutoPlacement(array $container, array $item): bool
@@ -60,6 +66,17 @@ class ContainerPriorityService
 
     public function compareForMerge(array $containerA, array $containerB): int
     {
+        if ($this->preferExpeditionCarry) {
+            $carryA = $this->isExpeditionCarryContainer($containerA);
+            $carryB = $this->isExpeditionCarryContainer($containerB);
+            if ($carryA && !$carryB) {
+                return -1;
+            }
+            if (!$carryA && $carryB) {
+                return 1;
+            }
+        }
+
         if ($this->isExcludedContainerType((string) $containerA['container_type']) && !$this->isExcludedContainerType((string) $containerB['container_type'])) {
             return 1;
         }
@@ -78,6 +95,18 @@ class ContainerPriorityService
 
     private function placementTier(array $container, array $item): ?string
     {
+        if ($this->isExpeditionCarryContainer($container)) {
+            if (!$this->preferExpeditionCarry) {
+                return null;
+            }
+
+            if (!$this->acceptance->canAcceptItem($container, $item)) {
+                return null;
+            }
+
+            return 'expedition_carry';
+        }
+
         if ($this->isExcludedContainerType((string) $container['container_type'])) {
             return null;
         }
@@ -148,12 +177,19 @@ class ContainerPriorityService
     private function tierPriority(string $tier): int
     {
         return match ($tier) {
+            'expedition_carry' => 5,
             'specialized' => 10,
             'main_inventory' => 20,
             'backpack_equipped' => 30,
             'backpack' => 40,
             default => 50,
         };
+    }
+
+    private function isExpeditionCarryContainer(array $container): bool
+    {
+        return strtoupper((string) ($container['container_type'] ?? '')) === 'EXPEDITION_CARRY'
+            || strtolower((string) ($container['definition_code'] ?? $container['container_definition_code'] ?? '')) === 'expedition_carry';
     }
 
     private function isExcludedContainerType(string $containerType): bool

@@ -24,6 +24,8 @@ class InventoryPlacementValidationTest extends TestCase
 
         $migration = require __DIR__ . '/../../../database/migrations/2026_07_08_000003_create_evolvaxe_foundation_tables.php';
         $migration->up($this->pdo);
+        $expeditionMigration = require __DIR__ . '/../../../database/migrations/2026_07_11_000029_expedition_state_and_decimal_currency.php';
+        $expeditionMigration->up($this->pdo);
 
         $seed = require __DIR__ . '/../../../database/seeds/001_evolvaxe_foundation_seed.php';
         $seed($this->pdo);
@@ -122,9 +124,9 @@ class InventoryPlacementValidationTest extends TestCase
 
     public function testContainerItemCanMoveInsideMainInventory(): void
     {
-        $result = $this->move('small_leather_backpack', 'main_inventory_level_1', 'main_inventory_level_1', 6, 0, 1);
+        $result = $this->move('small_leather_backpack', 'main_inventory_level_1', 'main_inventory_level_1', 9, 0, 1);
 
-        $this->assertSame(6, $result['grid_x']);
+        $this->assertSame(9, $result['grid_x']);
         $this->assertSame(0, $result['grid_y']);
         $this->assertSame(2, $result['placement_version']);
     }
@@ -206,30 +208,40 @@ class InventoryPlacementValidationTest extends TestCase
         );
     }
 
-    public function testExpeditionCarryAcceptsMvpLootMaterials(): void
+    public function testExpeditionCarryRejectsDepositsWithoutActiveExpedition(): void
     {
-        $result = $this->move('wood', 'main_inventory_level_1', 'expedition_carry', 0, 0, 1);
+        $this->assertInventoryException(
+            fn (): array => $this->move('wood', 'main_inventory_level_1', 'expedition_carry', 0, 0, 1),
+            'INVENTORY_EXPEDITION_CARRY_DEPOSIT_LOCKED'
+        );
+    }
+
+    public function testExpeditionCarryAcceptsAnyFittingItemDuringActiveExpedition(): void
+    {
+        $this->createActiveExpedition();
+        $this->createPlacedItem('iron_sword', 'sword-public-1', 'main_inventory_level_1', 9, 0, 1, 3);
+
+        $result = $this->moveByPublicId('sword-public-1', 'main_inventory_level_1', 'expedition_carry', 0, 0, 1);
 
         $this->assertSame($this->containerPublicId('expedition_carry'), $result['target_container_public_id']);
     }
 
-    public function testExpeditionCarryRejectsWeaponByServerRule(): void
+    public function testExpeditionCarryAllowsWithdrawalWithoutActiveExpedition(): void
     {
-        $this->createPlacedItem('iron_sword', 'sword-public-1', 'main_inventory_level_1', 6, 0, 1, 3);
+        $this->createPlacedItem('wood', 'wood-in-expedition', 'expedition_carry', 0, 0, 1, 1);
 
-        $this->assertInventoryException(
-            fn (): array => $this->moveByPublicId('sword-public-1', 'main_inventory_level_1', 'expedition_carry', 0, 0, 1),
-            'INVENTORY_CONTAINER_REJECTS_ITEM'
-        );
+        $result = $this->moveByPublicId('wood-in-expedition', 'expedition_carry', 'main_inventory_level_1', 9, 0, 1);
+
+        $this->assertSame($this->containerPublicId('main_inventory_level_1'), $result['target_container_public_id']);
     }
 
-    public function testFrontendClassesAreNotContainerAuthority(): void
+    public function testFrontendClassesAreNotExpeditionAuthority(): void
     {
-        $this->createPlacedItem('iron_sword', 'sword-public-2', 'main_inventory_level_1', 6, 0, 1, 3);
+        $this->createPlacedItem('iron_sword', 'sword-public-2', 'main_inventory_level_1', 9, 0, 1, 3);
 
         $this->assertInventoryException(
             fn (): array => $this->moveByPublicId('sword-public-2', 'main_inventory_level_1', 'expedition_carry', 0, 0, 1),
-            'INVENTORY_CONTAINER_REJECTS_ITEM'
+            'INVENTORY_EXPEDITION_CARRY_DEPOSIT_LOCKED'
         );
     }
 
@@ -398,6 +410,28 @@ class InventoryPlacementValidationTest extends TestCase
         $stmt->execute(['code' => $code]);
 
         return (string) $stmt->fetchColumn();
+    }
+
+    private function createActiveExpedition(): void
+    {
+        $this->pdo->exec("UPDATE container_instances
+            SET grid_columns = 4, grid_rows = 4
+            WHERE id = (
+                SELECT ci.id
+                FROM container_instances ci
+                INNER JOIN container_definitions cd ON cd.id = ci.container_definition_id
+                WHERE cd.code = 'expedition_carry' AND ci.owner_player_id = 1
+                LIMIT 1
+            )");
+        $stmt = $this->pdo->prepare("INSERT INTO expedition_instances (public_id, player_id, status, expedition_seed, ends_at)
+            VALUES (:public_id, :player_id, :status, :expedition_seed, :ends_at)");
+        $stmt->execute([
+            'public_id' => 'expedition-active-1',
+            'player_id' => 1,
+            'status' => 'active',
+            'expedition_seed' => 'test-seed',
+            'ends_at' => date('Y-m-d H:i:s', time() + 600),
+        ]);
     }
 
     private function linkedContainerPublicIdForItem(string $itemPublicId): string

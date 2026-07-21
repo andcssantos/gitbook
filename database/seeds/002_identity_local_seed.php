@@ -4,6 +4,40 @@ return function (PDO $pdo): void {
     $email = 'local@evolvaxe.test';
     $passwordHash = password_hash('evolvaxe-local', PASSWORD_ARGON2ID);
 
+    $ensureLocalExplorationTools = function (int $playerId) use ($pdo): void {
+        foreach (['simple_magnifier', 'simple_hatchet', 'explorer_gloves'] as $definitionCode) {
+            $exists = $pdo->prepare('SELECT ii.id
+                FROM item_instances ii
+                INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+                WHERE ii.owner_player_id = :player_id AND id.code = :definition_code
+                LIMIT 1');
+            $exists->execute([
+                'player_id' => $playerId,
+                'definition_code' => $definitionCode,
+            ]);
+            $itemId = (int) $exists->fetchColumn();
+            if ($itemId <= 0) {
+                try {
+                    $result = (new \App\Game\Inventory\Services\InventoryAutoPlacementService($pdo))->grantAndPlace(
+                        new \App\Game\Inventory\DTO\GrantItemRequest($playerId, $definitionCode, 1, 'common', 45.0, 'starter_forest')
+                    );
+                    $itemPublicId = (string) ($result['item_public_id'] ?? '');
+                    if ($itemPublicId !== '') {
+                        $lookup = $pdo->prepare('SELECT id FROM item_instances WHERE public_id = :public_id LIMIT 1');
+                        $lookup->execute(['public_id' => $itemPublicId]);
+                        $itemId = (int) $lookup->fetchColumn();
+                    }
+                } catch (Throwable) {
+                    continue;
+                }
+            }
+
+            if ($itemId > 0) {
+                (new \App\Game\Tools\Services\ToolMasteryService($pdo))->ensureForItem($playerId, $itemId);
+            }
+        }
+    };
+
     $stmt = $pdo->prepare('SELECT id FROM accounts WHERE email = :email LIMIT 1');
     $stmt->execute(['email' => $email]);
     $accountId = $stmt->fetchColumn();
@@ -46,6 +80,7 @@ return function (PDO $pdo): void {
             'id' => $playerId,
         ]);
         (new \App\Game\Inventory\Services\StarterInventoryService($pdo))->ensureForPlayer((int) $playerId);
+        $ensureLocalExplorationTools((int) $playerId);
         return;
     }
 
@@ -61,5 +96,7 @@ return function (PDO $pdo): void {
         'status' => 'active',
     ]);
 
-    (new \App\Game\Inventory\Services\StarterInventoryService($pdo))->ensureForPlayer((int) $pdo->lastInsertId());
+    $playerId = (int) $pdo->lastInsertId();
+    (new \App\Game\Inventory\Services\StarterInventoryService($pdo))->ensureForPlayer($playerId);
+    $ensureLocalExplorationTools($playerId);
 };

@@ -1,0 +1,36 @@
+{
+    "name": "admin-content",
+    "version": "1.0.0",
+    "description": "Painel minimo de gestao de conteudo",
+    "lang": "pt-BR",
+    "charset": "UTF-8",
+    "type": "page",
+    "layout": "dashboard",
+    "auth": true,
+    "cache": {
+        "html": 0,
+        "assets": 86400,
+        "preload": true
+    },
+    "seo": {
+        "title": "Evolvaxe | Admin Conteudo",
+        "description": "Gestao minima de definicoes de itens",
+        "meta": [
+            {
+                "name": "robots",
+                "content": "noindex, nofollow"
+            }
+        ]
+    },
+    "assets": {
+        "css": [],
+        "js": [],
+        "preload": [],
+        "prefetch": []
+    },
+    "dependencies": {
+        "libs": [],
+        "modules": []
+    },
+    "data": {}
+}

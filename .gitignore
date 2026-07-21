@@ -5,6 +5,8 @@
 /game-docs/**
 /logs
 /vendor
+/node_modules
+/output
 /logs
 /logs/**
 /cache/**
@@ -14,3 +16,13 @@ composer.lock
 php-server-*.log
 src/.cache/
 bootstrap/cache/*.php
+/itens
+/game-docs
+/game-docs/**
+/public/assets/game
+/public/assets/game/**
+/public/assets/vendor
+/docs
+/database
+/tests
+/tools

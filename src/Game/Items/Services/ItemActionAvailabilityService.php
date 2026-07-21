@@ -57,6 +57,35 @@ class ItemActionAvailabilityService
             return false;
         }
 
+        $flags = $this->safetyFlags($item);
+        if ($this->isLockProtectedAction($actionCode) && (bool) $flags['locked']) {
+            return false;
+        }
+
+        if ($actionCode === 'LOCK_ITEM' && (bool) $flags['locked']) {
+            return false;
+        }
+
+        if ($actionCode === 'UNLOCK_ITEM' && !(bool) $flags['locked']) {
+            return false;
+        }
+
+        if ($actionCode === 'FAVORITE_ITEM' && (bool) $flags['favorite']) {
+            return false;
+        }
+
+        if ($actionCode === 'UNFAVORITE_ITEM' && !(bool) $flags['favorite']) {
+            return false;
+        }
+
+        if ($actionCode === 'WISHLIST_ITEM' && (bool) $flags['wishlist']) {
+            return false;
+        }
+
+        if ($actionCode === 'UNWISHLIST_ITEM' && !(bool) $flags['wishlist']) {
+            return false;
+        }
+
         $rules = $this->rules->listForActionDefinition((int) $definition['id']);
         if ($rules === []) {
             return false;
@@ -113,6 +142,22 @@ class ItemActionAvailabilityService
         ]);
 
         return $stmt->fetchColumn() !== false;
+    }
+
+    private function isLockProtectedAction(string $actionCode): bool
+    {
+        return in_array($actionCode, ['DISCARD', 'SELL', 'LIST_MARKET', 'DISMANTLE'], true);
+    }
+
+    private function safetyFlags(array $item): array
+    {
+        $playerId = (int) ($item['owner_player_id'] ?? 0);
+        $itemInstanceId = (int) ($item['id'] ?? $item['item_instance_id'] ?? 0);
+        if ($playerId <= 0 || $itemInstanceId <= 0) {
+            return ['locked' => false, 'favorite' => false, 'wishlist' => false];
+        }
+
+        return (new ItemSafetyService($this->pdo()))->flagsForItem($playerId, $itemInstanceId);
     }
 
     private function marketEligible(string $actionCode, array $item): bool

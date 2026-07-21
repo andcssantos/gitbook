@@ -55,6 +55,21 @@ class ApiRouteTest extends TestCase
         ], $routes['GET']['/api/auth/me']['options']['middleware']);
     }
 
+    public function testPlayerHudRouteUsesExpectedMiddlewareStack(): void
+    {
+        require __DIR__ . '/../../src/routes/app/api/RoutesPlayer.php';
+
+        $route = Route::routes()['GET']['/api/player/hud'] ?? null;
+
+        $this->assertNotNull($route);
+        $this->assertSame('api.player.hud', $route['name']);
+        $this->assertSame('App/Api/PlayerController@hud', $route['action']);
+        $this->assertSame([
+            'auth',
+            'rateLimit:120,60',
+        ], $route['options']['middleware']);
+    }
+
     public function testInventoryMoveRouteUsesExpectedMiddlewareStack(): void
     {
         require __DIR__ . '/../../src/routes/app/api/RoutesInventory.php';
@@ -120,6 +135,25 @@ class ApiRouteTest extends TestCase
     public function testItemActionsRoutesUseExpectedMiddlewareStack(): void
     {
         require __DIR__ . '/../../src/routes/app/api/RoutesItemActions.php';
+
+        $bulkRoute = Route::routes()['POST']['/api/items/actions/bulk'] ?? null;
+        $this->assertNotNull($bulkRoute);
+        $this->assertSame('api.items.actions.bulk', $bulkRoute['name']);
+        $this->assertSame([
+            'auth',
+            'csrf',
+            'rateLimit:20,60',
+            'idempotency:api.items.actions.bulk',
+            'audit:items.actions.bulk',
+        ], $bulkRoute['options']['middleware']);
+
+        $bulkShowRoute = Route::routes()['GET']['/api/items/actions/bulk/{batchId:string:32}'] ?? null;
+        $this->assertNotNull($bulkShowRoute);
+        $this->assertSame('api.items.actions.bulk.show', $bulkShowRoute['name']);
+        $this->assertSame([
+            'auth',
+            'rateLimit:60,60',
+        ], $bulkShowRoute['options']['middleware']);
 
         $indexRoute = Route::routes()['GET']['/api/items/{itemPublicId:string:64}/actions'] ?? null;
         $this->assertNotNull($indexRoute);

@@ -4,8 +4,10 @@ namespace App\Game\Socketing\Services;
 
 use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Inventory\InventoryException;
+use App\Game\Inventory\Services\InventoryStateService;
 use App\Game\Items\Repositories\ItemInstancePropertyRepository;
 use App\Game\Items\Repositories\ItemInstanceRepository;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Game\Socketing\DTO\ApplyGemSocketRequest;
 use App\Game\Socketing\Repositories\ItemInstanceSocketRepository;
 use App\Support\DB;
@@ -46,9 +48,13 @@ class GemSocketService
             throw new InventoryException('SOCKET_CONFIRMATION_REQUIRED', 'Socketing requires confirmation.', 422);
         }
 
-        return $this->transaction(function () use ($request): array {
+        $result = $this->transaction(function () use ($request): array {
             $gem = $this->loadItem($request->gemItemPublicId, $request->playerId, true);
             $target = $this->loadItem($request->targetItemPublicId, $request->playerId, true);
+
+            $safety = new ItemSafetyService($this->pdo);
+            $safety->assertNotLocked($request->playerId, (int) $gem['id'], 'SOCKET_CONSUME_GEM');
+            $safety->assertNotLocked($request->playerId, (int) $target['id'], 'SOCKET_TARGET');
 
             $this->assertPlacementVersion($gem, $request->expectedGemPlacementVersion);
             $this->assertPlacementVersion($target, $request->expectedTargetPlacementVersion);
@@ -71,6 +77,10 @@ class GemSocketService
                 'preview' => $preview,
             ]);
         });
+
+        InventoryStateService::forgetCombatSnapshot($request->playerId);
+
+        return $result;
     }
 
     private function loadItem(string $publicId, int $playerId, bool $lock = false): array

@@ -13,8 +13,18 @@ class ContainerItemRepository
 
     public function countByContainerId(int $containerId): int
     {
-        $stmt = $this->pdo()->prepare('SELECT COUNT(*) FROM container_items WHERE container_instance_id = :container_id');
-        $stmt->execute(['container_id' => $containerId]);
+        $stmt = $this->pdo()->prepare(
+            'SELECT COUNT(*)
+             FROM container_items ci
+             INNER JOIN item_instances ii ON ii.id = ci.item_instance_id
+             WHERE ci.container_instance_id = :container_id
+               AND ii.state = :state
+               AND ii.quantity > 0'
+        );
+        $stmt->execute([
+            'container_id' => $containerId,
+            'state' => 'available',
+        ]);
 
         return (int) $stmt->fetchColumn();
     }
@@ -34,8 +44,22 @@ class ContainerItemRepository
 
     public function listByContainerId(int $containerId, bool $lock = false): array
     {
-        $stmt = $this->pdo()->prepare('SELECT * FROM container_items WHERE container_instance_id = :container_id ORDER BY id ASC' . $this->lockClause($lock));
-        $stmt->execute(['container_id' => $containerId]);
+        $stmt = $this->pdo()->prepare(
+            'SELECT ci.*,
+                    id.grid_w AS definition_grid_w,
+                    id.grid_h AS definition_grid_h
+             FROM container_items ci
+             INNER JOIN item_instances ii ON ii.id = ci.item_instance_id
+             INNER JOIN item_definitions id ON id.id = ii.item_definition_id
+             WHERE ci.container_instance_id = :container_id
+               AND ii.state = :state
+               AND ii.quantity > 0
+             ORDER BY ci.id ASC' . $this->lockClause($lock)
+        );
+        $stmt->execute([
+            'container_id' => $containerId,
+            'state' => 'available',
+        ]);
 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }

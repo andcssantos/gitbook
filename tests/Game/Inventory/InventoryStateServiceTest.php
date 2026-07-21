@@ -37,7 +37,7 @@ class InventoryStateServiceTest extends TestCase
         $main = $this->containerByCode($state, 'main_inventory_level_1');
 
         $this->assertSame(['columns' => 12, 'rows' => 5], $main['grid']);
-        $this->assertCount(4, $main['items']);
+        $this->assertCount(6, $main['items']);
         $this->assertSame('stone_pickaxe', $main['items'][0]['definition']['code']);
         $this->assertArrayHasKey('placement', $main['items'][0]);
         $this->assertSame(0, $main['items'][0]['placement']['grid_x']);

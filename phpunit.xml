@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="vendor/autoload.php" colors="true">
+<phpunit bootstrap="tests/bootstrap.php" colors="true">
     <testsuites>
         <testsuite name="GitBook Framework Tests">
             <directory>tests</directory>
         </testsuite>
     </testsuites>
+    <extensions>
+        <bootstrap class="Ev2CombatSnapshotResetExtension"/>
+    </extensions>
 </phpunit>

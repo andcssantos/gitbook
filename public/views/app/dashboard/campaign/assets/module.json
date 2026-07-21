@@ -1,0 +1,62 @@
+{
+    "name": "campaign",
+    "version": "1.4.3",
+    "description": "Mapa 2D + atmosfera 3D on + trilha ARPG + essência de raridade",
+    "lang": "pt-BR",
+    "charset": "UTF-8",
+    "type": "page",
+    "layout": "dashboard",
+    "auth": true,
+    "cache": {
+        "html": 0,
+        "assets": 86400,
+        "preload": true
+    },
+    "seo": {
+        "title": "Evolvaxe | Campanha",
+        "description": "Mapa do Mundo 1 — fases idle e vilarejo",
+        "meta": [
+            {
+                "name": "robots",
+                "content": "noindex, nofollow"
+            }
+        ]
+    },
+    "assets": {
+        "css": [],
+        "js": [],
+        "preload": [],
+        "prefetch": []
+    },
+    "dependencies": {
+        "libs": {
+            "css": [
+                "assets/vendor/gridstack/gridstack.min.css"
+            ],
+            "js": [
+                {
+                    "src": "assets/vendor/gsap/dist/gsap.min.js",
+                    "defer": true
+                },
+                {
+                    "src": "assets/vendor/howler/dist/howler.min.js",
+                    "defer": true
+                },
+                {
+                    "src": "assets/vendor/tsparticles/@tsparticles/slim/tsparticles.slim.bundle.min.js",
+                    "defer": true
+                },
+                {
+                    "src": "assets/vendor/tsparticles/@tsparticles_confetti/confetti/tsparticles.confetti.bundle.min.js",
+                    "defer": true
+                },
+                {
+                    "src": "assets/vendor/gridstack/gridstack-all.js",
+                    "defer": true
+                }
+            ]
+        },
+        "modules": []
+    },
+    "data": {}
+}

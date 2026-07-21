@@ -12,13 +12,20 @@ use App\Game\Inventory\Services\InventoryMoveService;
 use App\Game\Inventory\Services\InventoryOrganizeService;
 use App\Game\Inventory\Services\InventoryStateService;
 use App\Game\Inventory\Services\ItemRenameService;
+use App\Game\Inventory\Services\MainInventoryExpansionService;
 use App\Game\Inventory\Services\StackMergeService;
 use App\Game\Inventory\Services\StackSplitService;
+use App\Game\Inventory\Services\StashVaultService;
+use App\Game\Inventory\Services\ExplorationLoadoutService;
+use App\Game\Inventory\Services\ItemSetCodexService;
+use App\Game\Equipment\Services\EquipmentLoadoutService;
+use App\Game\Crafting\Services\CraftRecipeJournalService;
 use App\Game\Crafting\Services\CraftingWorkspaceService;
 use App\Game\Enhancement\DTO\ApplyJewelRequest;
 use App\Game\Enhancement\Services\JewelEnhancementService;
 use App\Game\Socketing\DTO\ApplyGemSocketRequest;
 use App\Game\Socketing\Services\GemSocketService;
+use App\Game\Socketing\Services\GemSocketRemoveService;
 use App\Game\Items\Services\ItemInvestigationService;
 use App\Game\Materials\Services\PlayerMaterialStashService;
 use App\Game\Player\Services\PlayerResolver;
@@ -233,7 +240,7 @@ class InventoryController extends Controller
             $player = (new PlayerResolver())->requireCurrentPlayer();
             $containerPublicId = (string) ($params['containerPublicId'] ?? '');
             $payload = Request::body();
-            $mode = is_array($payload) ? (string) ($payload['mode'] ?? 'compact') : 'compact';
+            $mode = (string) ($payload['mode'] ?? 'compact');
             $result = (new InventoryOrganizeService())->organize((int) $player['id'], $containerPublicId, $mode);
 
             $this->success($result, 'Inventory container organized.');
@@ -296,6 +303,32 @@ class InventoryController extends Controller
             $report = (new ItemInvestigationService())->investigate((int) $player['id'], $itemPublicId);
 
             $this->success($report, 'Item investigation report.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function expandContainerPreview(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $containerPublicId = (string) ($params['containerPublicId'] ?? '');
+            $preview = (new MainInventoryExpansionService())->preview((int) $player['id'], $containerPublicId);
+
+            $this->success($preview, 'Inventory expansion preview.');
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function expandContainer(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $containerPublicId = (string) ($params['containerPublicId'] ?? '');
+            $result = (new MainInventoryExpansionService())->expand((int) $player['id'], $containerPublicId);
+
+            $this->success($result, 'Inventario expandido.');
         } catch (InventoryException $e) {
             $this->fail($e->getMessage(), $e->status(), $e->errors());
         }
@@ -384,6 +417,122 @@ class InventoryController extends Controller
             $this->success(['recipe_code' => (string) $payload['recipe_code'], 'visibility' => 'shared'], 'Receita compartilhada com todos os jogadores.');
         } catch (ValidationException $e) {
             $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function setCodex(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $this->success((new ItemSetCodexService())->forPlayer((int) $player['id']), 'Item set codex.');
+    }
+
+    public function toggleSetWishlist(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), ['definition_code' => 'required|string|max:80', 'wishlisted' => 'required|boolean']);
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new ItemSetCodexService())->toggleDefinitionWishlist((int) $player['id'], (string) $payload['definition_code'], (bool) $payload['wishlisted']), 'Set wishlist updated.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        }
+    }
+
+    public function loadouts(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $this->success((new EquipmentLoadoutService())->listForPlayer((int) $player['id']), 'Equipment loadouts.');
+    }
+
+    public function saveLoadout(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), ['slot_index' => 'required|int|min:0|max:4', 'name' => 'required|string|max:48']);
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new EquipmentLoadoutService())->saveFromCurrent((int) $player['id'], (int) $payload['slot_index'], (string) $payload['name']), 'Equipment loadout saved.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function applyLoadout(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), ['loadout_public_id' => 'required|string|max:64']);
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new EquipmentLoadoutService())->apply((int) $player['id'], (string) $payload['loadout_public_id']), 'Equipment loadout applied.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function unsocketPreview(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), ['target_item_public_id' => 'required|string|max:64', 'socket_index' => 'required|int|min:0']);
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new GemSocketRemoveService())->previewUnsocket((int) $player['id'], (string) $payload['target_item_public_id'], (int) $payload['socket_index']), 'Unsocket preview.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function unsocket(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), ['target_item_public_id' => 'required|string|max:64', 'socket_index' => 'required|int|min:0', 'confirm' => 'required|boolean']);
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new GemSocketRemoveService())->unsocket((int) $player['id'], (string) $payload['target_item_public_id'], (int) $payload['socket_index'], (bool) $payload['confirm']), 'Gem unsocketed.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function craftingRecipes(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $this->success((new CraftRecipeJournalService())->listKnownForPlayer((int) $player['id']), 'Known crafting recipes.');
+    }
+
+    public function stashVault(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $this->success((new StashVaultService())->listForPlayer((int) $player['id'], Request::query()['tab'] ?? null), 'Stash vault.');
+    }
+
+    public function explorationLoadout(array $params = []): void
+    {
+        $player = (new PlayerResolver())->requireCurrentPlayer();
+        $this->success((new ExplorationLoadoutService())->get((int) $player['id']), 'Exploration loadout.');
+    }
+
+    public function saveExplorationLoadout(array $params = []): void
+    {
+        try {
+            $payload = $this->validate(Request::body(), ['backpack_item_public_id' => 'nullable|string|max:64', 'tool_item_public_ids' => 'nullable|array', 'potion_item_public_ids' => 'nullable|array', 'notes' => 'nullable|string|max:180']);
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new ExplorationLoadoutService())->save((int) $player['id'], $payload['backpack_item_public_id'] ?? null, (array) ($payload['tool_item_public_ids'] ?? []), (array) ($payload['potion_item_public_ids'] ?? []), $payload['notes'] ?? null), 'Exploration loadout saved.');
+        } catch (ValidationException $e) {
+            $this->fail('Validation failed', 422, $e->errors());
+        } catch (InventoryException $e) {
+            $this->fail($e->getMessage(), $e->status(), $e->errors());
+        }
+    }
+
+    public function applyExplorationLoadout(array $params = []): void
+    {
+        try {
+            $player = (new PlayerResolver())->requireCurrentPlayer();
+            $this->success((new ExplorationLoadoutService())->apply((int) $player['id']), 'Exploration loadout applied.');
         } catch (InventoryException $e) {
             $this->fail($e->getMessage(), $e->status(), $e->errors());
         }

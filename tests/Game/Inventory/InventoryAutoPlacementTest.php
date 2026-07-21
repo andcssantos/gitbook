@@ -209,6 +209,47 @@ class InventoryAutoPlacementTest extends TestCase
         $this->assertSame(2, $this->placementCountForPlayer());
     }
 
+    public function testPreferExpeditionCarryDoesNotMergeIntoOtherBags(): void
+    {
+        $this->createStack('wood', 'wood-in-main', 10, 40.0, 'common', 'starter_forest', true, 0, 0);
+
+        $result = (new InventoryAutoPlacementService($this->pdo))->grantAndPlace(new GrantItemRequest(
+            1,
+            'wood',
+            3,
+            'common',
+            40.0,
+            'starter_forest',
+            true
+        ));
+
+        $this->assertSame('placed', $result['action']);
+        $this->assertSame('expedition_carry', $result['container_definition_code']);
+        $this->assertSame(10, $this->quantity('wood-in-main'));
+        $this->assertSame(3, $this->quantity($result['item_public_id']));
+    }
+
+    public function testPreferExpeditionCarryRejectsWhenCarryIsFull(): void
+    {
+        $carryId = $this->containerId('expedition_carry');
+        $this->pdo->prepare('UPDATE container_instances SET grid_columns = 1, grid_rows = 1 WHERE id = :id')
+            ->execute(['id' => $carryId]);
+        $this->createStackInContainer('stone', 'stone-carry-full', 1, $carryId, 0, 0);
+
+        $this->assertInventoryException(
+            fn (): array => (new InventoryAutoPlacementService($this->pdo))->grantAndPlace(new GrantItemRequest(
+                1,
+                'wood',
+                1,
+                'common',
+                40.0,
+                'starter_forest',
+                true
+            )),
+            'INVENTORY_FULL'
+        );
+    }
+
     private function configureSpecializedChest(): void
     {
         $definitionId = $this->id('container_definitions', 'wooden_chest');
@@ -358,6 +399,42 @@ class InventoryAutoPlacementTest extends TestCase
                 'grid_h' => (int) $definition['grid_h'],
             ]);
         }
+    }
+
+    private function createStackInContainer(
+        string $itemCode,
+        string $publicId,
+        int $quantity,
+        int $containerId,
+        int $x,
+        int $y
+    ): void {
+        $definition = $this->fetchByCode('item_definitions', $itemCode);
+        $stmt = $this->pdo->prepare('INSERT INTO item_instances (
+            public_id, item_definition_id, owner_player_id, quantity, quality_value, quality_bucket, bind_type, state
+        ) VALUES (
+            :public_id, :item_definition_id, :owner_player_id, :quantity, :quality_value, :quality_bucket, :bind_type, :state
+        )');
+        $stmt->execute([
+            'public_id' => $publicId,
+            'item_definition_id' => (int) $definition['id'],
+            'owner_player_id' => 1,
+            'quantity' => $quantity,
+            'quality_value' => 35.0,
+            'quality_bucket' => 'common',
+            'bind_type' => 'none',
+            'state' => 'available',
+        ]);
+
+        $placement = $this->pdo->prepare('INSERT INTO container_items (container_instance_id, item_instance_id, grid_x, grid_y, grid_w, grid_h) VALUES (:container_instance_id, :item_instance_id, :grid_x, :grid_y, :grid_w, :grid_h)');
+        $placement->execute([
+            'container_instance_id' => $containerId,
+            'item_instance_id' => (int) $this->pdo->lastInsertId(),
+            'grid_x' => $x,
+            'grid_y' => $y,
+            'grid_w' => (int) $definition['grid_w'],
+            'grid_h' => (int) $definition['grid_h'],
+        ]);
     }
 
     private function quantity(string $publicId): int

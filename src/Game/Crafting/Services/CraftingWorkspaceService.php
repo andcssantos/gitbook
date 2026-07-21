@@ -6,6 +6,7 @@ use App\Game\Inventory\DTO\GrantItemRequest;
 use App\Game\Inventory\InventoryException;
 use App\Game\Inventory\Services\InventoryAutoPlacementService;
 use App\Game\Items\Repositories\ItemDefinitionRepository;
+use App\Game\Items\Services\ItemSafetyService;
 use App\Game\Market\Services\MarketItemContextService;
 use App\Game\Market\Services\PlayerCurrencyService;
 use App\Support\DB;
@@ -23,7 +24,8 @@ class CraftingWorkspaceService
         private ?CraftingEligibilityService $eligibility = null,
         private ?CraftingRecipeCatalog $catalog = null,
         private ?CraftingBlueprintService $blueprints = null,
-        private ?PlayerCurrencyService $currencies = null
+        private ?PlayerCurrencyService $currencies = null,
+        private ?CraftingEventService $events = null
     ) {
         $this->context ??= new MarketItemContextService($this->pdo);
         $this->analyzer ??= new CraftingCompositionAnalyzer(
@@ -36,6 +38,7 @@ class CraftingWorkspaceService
         $this->catalog ??= new CraftingRecipeCatalog();
         $this->blueprints ??= new CraftingBlueprintService($this->pdo, $this->catalog);
         $this->currencies ??= new PlayerCurrencyService($this->pdo);
+        $this->events ??= new CraftingEventService($this->pdo);
     }
 
     public function workspaces(): array
@@ -62,14 +65,26 @@ class CraftingWorkspaceService
      */
     public function execute(int $playerId, string $workspace, array $slots): array
     {
-        return $this->transaction(function () use ($playerId, $workspace, $slots): array {
+        try {
+            return $this->transaction(function () use ($playerId, $workspace, $slots): array {
             $resolved = $this->resolveSlots($playerId, $slots, true);
             $analysis = $this->analyzer->analyze($workspace, $resolved, $playerId);
+            $recipeCode = (string) ($analysis['recipe_match']['recipe_code'] ?? '');
+            $filled = array_values(array_filter($resolved, fn ($slot): bool => is_array($slot)));
+            $event = $this->events->start(
+                $playerId,
+                $workspace,
+                $recipeCode !== '' ? $recipeCode : null,
+                $filled,
+                $analysis,
+                (int) ($analysis['gold_cost'] ?? 0)
+            );
+
             if (!($analysis['can_craft'] ?? false)) {
+                $this->events->fail($event, 'CRAFT_INVALID_COMPOSITION', (string) ($analysis['reason'] ?? 'Composicao invalida.'));
                 throw new InventoryException('CRAFT_INVALID_COMPOSITION', (string) ($analysis['reason'] ?? 'Composicao invalida.'), 422);
             }
 
-            $recipeCode = (string) ($analysis['recipe_match']['recipe_code'] ?? '');
             $recipe = $recipeCode !== '' ? $this->catalog->findByCode($recipeCode) : null;
             $output = $this->selectOutput($workspace, $recipe, $analysis['predicted_output'] ?? [], $resolved);
             $definitionCode = (string) ($output['definition_code'] ?? '');
@@ -82,14 +97,25 @@ class CraftingWorkspaceService
                 $this->currencies->debit($playerId, 'gold', $goldCost, 'CRAFT_FEE', 'crafting', $recipeCode !== '' ? $recipeCode : $workspace);
             }
 
-            $filled = array_values(array_filter($resolved, fn ($slot): bool => is_array($slot)));
-            $this->consumption->consume($playerId, $filled);
+            $this->consumption->consume($playerId, $filled, [
+                'crafting_event_public_id' => (string) $event['public_id'],
+                'recipe_code' => $recipeCode !== '' ? $recipeCode : null,
+                'workspace' => $workspace,
+            ]);
 
             $grant = (new InventoryAutoPlacementService($this->pdo))->grantAndPlace(GrantItemRequest::fromArray($playerId, [
                 'item_definition_code' => $definitionCode,
                 'quantity' => 1,
                 'quality_bucket' => (string) ($output['quality_bucket'] ?? 'common'),
             ]));
+            $this->events->complete($playerId, $event, $output + [
+                'recipe_code' => $recipeCode !== '' ? $recipeCode : null,
+                'workspace' => $workspace,
+            ], $grant);
+
+            if ($recipeCode !== '') {
+                $this->recordCraftLog($playerId, $recipeCode, $workspace, $definitionCode);
+            }
 
             $discovery = $recipeCode !== '' ? $this->blueprints->registerDiscovery($playerId, $recipeCode) : null;
 
@@ -99,13 +125,46 @@ class CraftingWorkspaceService
                 'analysis' => $analysis,
                 'granted_item' => $grant,
                 'discovery' => $discovery,
+                'crafting_event' => [
+                    'public_id' => (string) $event['public_id'],
+                    'seed' => (string) $event['craft_seed'],
+                    'status' => 'completed',
+                ],
             ];
-        });
+            });
+        } catch (InventoryException $e) {
+            $this->recordFailedAttempt($playerId, $workspace, $slots, $e->errorCode(), $e->getMessage());
+            throw $e;
+        }
     }
 
     public function shareRecipe(int $playerId, string $recipeCode): void
     {
         $this->blueprints->shareRecipe($playerId, $recipeCode);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $slots
+     */
+    private function recordFailedAttempt(int $playerId, string $workspace, array $slots, string $code, string $message): void
+    {
+        try {
+            $resolved = $this->resolveSlots($playerId, $slots, false);
+            $analysis = $this->analyzer->analyze($workspace, $resolved, $playerId);
+            $filled = array_values(array_filter($resolved, fn ($slot): bool => is_array($slot)));
+            $recipeCode = (string) ($analysis['recipe_match']['recipe_code'] ?? '');
+            $event = $this->events->start(
+                $playerId,
+                $workspace,
+                $recipeCode !== '' ? $recipeCode : null,
+                $filled,
+                $analysis,
+                (int) ($analysis['gold_cost'] ?? 0)
+            );
+            $this->events->fail($event, $code, $message);
+        } catch (Throwable) {
+            // Never mask the original crafting failure with audit persistence problems.
+        }
     }
 
     /**
@@ -137,7 +196,7 @@ class CraftingWorkspaceService
                 $originCode = (string) ($source['origin_code'] ?? '');
                 $allocationKey = "material:{$familyCode}::{$originCode}";
                 $allocationKeys[$allocationKey] = ($allocationKeys[$allocationKey] ?? 0) + $consumeQty;
-                $resolved[$index] = $this->resolveMaterialSlot($playerId, $source, $consumeQty, $lock);
+                $resolved[$index] = $this->withSlotIndex($this->resolveMaterialSlot($playerId, $source, $consumeQty, $lock), $index);
                 continue;
             }
 
@@ -145,13 +204,24 @@ class CraftingWorkspaceService
                 $publicId = (string) ($source['public_id'] ?? '');
                 $allocationKey = "item:{$publicId}";
                 $allocationKeys[$allocationKey] = ($allocationKeys[$allocationKey] ?? 0) + $consumeQty;
-                $resolved[$index] = $this->resolveItemSlot($playerId, $publicId, $consumeQty, $lock);
+                $resolved[$index] = $this->withSlotIndex($this->resolveItemSlot($playerId, $publicId, $consumeQty, $lock), $index);
             }
         }
 
         $this->validateAllocations($resolved, $allocationKeys);
 
         return $resolved;
+    }
+
+    private function withSlotIndex(?array $slot, int $index): ?array
+    {
+        if ($slot === null) {
+            return null;
+        }
+
+        $slot['slot_index'] = $index;
+
+        return $slot;
     }
 
     /**
@@ -200,6 +270,10 @@ class CraftingWorkspaceService
 
         $isEquipped = $this->isEquipped($playerId, (int) ($item['item_instance_id'] ?? 0));
         $this->eligibility->assertItemEligible($item, $isEquipped);
+        $itemInstanceId = (int) ($item['item_instance_id'] ?? 0);
+        if ($itemInstanceId > 0) {
+            (new ItemSafetyService($this->pdo()))->assertNotLocked($playerId, $itemInstanceId, 'CRAFT');
+        }
 
         $definitionCode = (string) ($item['definition_code'] ?? $item['definition']['code'] ?? '');
 
@@ -390,6 +464,7 @@ class CraftingWorkspaceService
 
             return [
                 'source_kind' => $slot['source_kind'] ?? null,
+                'slot_index' => $slot['slot_index'] ?? null,
                 'public_id' => $slot['public_id'] ?? null,
                 'family_code' => $slot['family_code'] ?? null,
                 'origin_code' => $slot['origin_code'] ?? null,
@@ -436,6 +511,38 @@ class CraftingWorkspaceService
         $stmt->execute(['id' => $categoryId]);
 
         return (string) ($stmt->fetchColumn() ?: 'material');
+    }
+
+    private function recordCraftLog(int $playerId, string $recipeCode, string $workspace, string $outputDefinitionCode): void
+    {
+        if (!$this->tableExists('player_craft_log')) {
+            return;
+        }
+
+        $this->pdo()->prepare('INSERT INTO player_craft_log (player_id, recipe_code, workspace, output_definition_code)
+            VALUES (:player_id, :recipe_code, :workspace, :output_definition_code)')
+            ->execute([
+                'player_id' => $playerId,
+                'recipe_code' => $recipeCode,
+                'workspace' => $workspace,
+                'output_definition_code' => $outputDefinitionCode,
+            ]);
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $driver = $this->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'sqlite') {
+            $stmt = $this->pdo()->prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table LIMIT 1");
+            $stmt->execute(['table' => $table]);
+
+            return (bool) $stmt->fetchColumn();
+        }
+
+        $stmt = $this->pdo()->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table LIMIT 1');
+        $stmt->execute(['table' => $table]);
+
+        return (bool) $stmt->fetchColumn();
     }
 
     private function transaction(callable $callback): mixed

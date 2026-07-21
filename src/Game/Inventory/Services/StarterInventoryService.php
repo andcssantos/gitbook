@@ -6,6 +6,7 @@ use App\Game\Containers\Repositories\ContainerRepository;
 use App\Game\Containers\Services\PhysicalContainerLinkService;
 use App\Game\Items\Repositories\ItemDefinitionRepository;
 use App\Game\Items\Repositories\ItemInstanceRepository;
+use App\Game\Tools\Services\ToolMasteryService;
 use App\Http\HttpException;
 use App\Support\DB;
 use PDO;
@@ -99,6 +100,10 @@ class StarterInventoryService
                 }
             }
 
+            if ($definition['category_id'] === $this->toolCategoryId()) {
+                (new ToolMasteryService($this->pdo()))->ensureForItem($playerId, $itemId);
+            }
+
             $placed[] = [
                 'item_id' => $itemId,
                 'code' => $entry['code'],
@@ -168,6 +173,28 @@ class StarterInventoryService
                 'w' => 2,
                 'h' => 2,
             ],
+            [
+                'code' => 'simple_magnifier',
+                'quantity' => 1,
+                'quality_value' => 45.000,
+                'quality_bucket' => 'common',
+                'durability' => 60,
+                'x' => 6,
+                'y' => 0,
+                'w' => 1,
+                'h' => 1,
+            ],
+            [
+                'code' => 'simple_hatchet',
+                'quantity' => 1,
+                'quality_value' => 45.000,
+                'quality_bucket' => 'common',
+                'durability' => 75,
+                'x' => 7,
+                'y' => 0,
+                'w' => 2,
+                'h' => 2,
+            ],
         ];
     }
 
@@ -186,6 +213,14 @@ class StarterInventoryService
         $stmt->execute(['id' => $itemId]);
 
         return (string) $stmt->fetchColumn();
+    }
+
+    private function toolCategoryId(): int
+    {
+        $stmt = $this->pdo()->prepare("SELECT id FROM item_categories WHERE code = 'tool' LIMIT 1");
+        $stmt->execute();
+
+        return (int) $stmt->fetchColumn();
     }
 
     private function transaction(callable $callback): mixed

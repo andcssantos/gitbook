@@ -14,7 +14,24 @@ use Throwable;
 
 class ItemActionExecuteService
 {
-    private const EXECUTABLE = ['DISCARD', 'INSPECT', 'OPEN', 'EQUIP', 'UNEQUIP', 'SELL', 'LIST_MARKET', 'DISMANTLE'];
+    private const EXECUTABLE = [
+        'DISCARD',
+        'INSPECT',
+        'OPEN',
+        'EQUIP',
+        'UNEQUIP',
+        'SELL',
+        'LIST_MARKET',
+        'DISMANTLE',
+        'LOCK_ITEM',
+        'UNLOCK_ITEM',
+        'FAVORITE_ITEM',
+        'UNFAVORITE_ITEM',
+        'WISHLIST_ITEM',
+        'UNWISHLIST_ITEM',
+    ];
+
+    private const LOCK_PROTECTED = ['DISCARD', 'SELL', 'LIST_MARKET', 'DISMANTLE'];
 
     public function __construct(
         private ?PDO $pdo = null,
@@ -35,6 +52,10 @@ class ItemActionExecuteService
         return $this->transaction(function () use ($playerId, $itemPublicId, $actionCode, $confirmed, $payload): array {
             $items = new ItemInstanceRepository($this->pdo());
             $item = $this->loadOwnedItem($items, $itemPublicId, $playerId);
+            $safety = new ItemSafetyService($this->pdo());
+            if (in_array($actionCode, self::LOCK_PROTECTED, true)) {
+                $safety->assertNotLocked($playerId, (int) $item['id'], $actionCode);
+            }
 
             if (!$this->availability->isExecutable($actionCode, $item)) {
                 throw new InventoryException('ITEM_ACTION_NOT_AVAILABLE', 'This action is not available for the selected item.', 422);
@@ -53,11 +74,21 @@ class ItemActionExecuteService
                 'DISCARD' => $this->discard($item),
                 'INSPECT' => $this->inspect($item),
                 'OPEN' => $this->open($item),
-                'EQUIP' => (new EquipmentService($this->pdo()))->equip($playerId, $itemPublicId),
+                'EQUIP' => (new EquipmentService($this->pdo()))->equip(
+                    $playerId,
+                    $itemPublicId,
+                    isset($payload['target_slot']) ? trim((string) $payload['target_slot']) : null
+                ),
                 'UNEQUIP' => (new EquipmentService($this->pdo()))->unequip($playerId, $itemPublicId),
                 'SELL' => (new \App\Game\Market\Services\NpcSellService($this->pdo()))->sell($playerId, $itemPublicId),
                 'LIST_MARKET' => $this->listOnMarket($playerId, $itemPublicId, $payload),
                 'DISMANTLE' => (new \App\Game\Materials\Services\DismantleService($this->pdo()))->dismantle($playerId, $itemPublicId),
+                'LOCK_ITEM' => $safety->setLocked($playerId, $item, true),
+                'UNLOCK_ITEM' => $safety->setLocked($playerId, $item, false),
+                'FAVORITE_ITEM' => $safety->setFavorite($playerId, $item, true),
+                'UNFAVORITE_ITEM' => $safety->setFavorite($playerId, $item, false),
+                'WISHLIST_ITEM' => $safety->setWishlist($playerId, $item, true),
+                'UNWISHLIST_ITEM' => $safety->setWishlist($playerId, $item, false),
             };
         });
     }
@@ -86,6 +117,7 @@ class ItemActionExecuteService
         $compositions->deleteForItem((int) $item['id']);
 
         $items = new ItemInstanceRepository($this->pdo());
+        (new ItemSafetyService($this->pdo()))->record($item, (int) $item['owner_player_id'], 'discarded');
         $items->deleteById((int) $item['id']);
 
         return [

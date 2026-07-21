@@ -65,6 +65,44 @@ class ItemInstanceSocketRepository
         ]);
     }
 
+    public function findFilledByIndex(int $itemInstanceId, int $socketIndex, bool $lock = false): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT s.*, sg.gem_item_instance_id
+            FROM item_instance_sockets s
+            INNER JOIN item_socketed_gems sg ON sg.socket_id = s.id
+            WHERE s.item_instance_id = :item_instance_id
+                AND s.socket_index = :socket_index
+                AND s.status = :status
+            LIMIT 1' . $this->lockClause($lock));
+        $stmt->execute([
+            'item_instance_id' => $itemInstanceId,
+            'socket_index' => $socketIndex,
+            'status' => 'filled',
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
+    public function findSocketedGem(int $socketId, bool $lock = false): ?array
+    {
+        $stmt = $this->pdo()->prepare('SELECT * FROM item_socketed_gems WHERE socket_id = :socket_id LIMIT 1' . $this->lockClause($lock));
+        $stmt->execute(['socket_id' => $socketId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
+    public function clearSocketedGem(int $socketId): void
+    {
+        $stmt = $this->pdo()->prepare('DELETE FROM item_socketed_gems WHERE socket_id = :socket_id');
+        $stmt->execute(['socket_id' => $socketId]);
+    }
+
+    public function markEmpty(int $socketId): void
+    {
+        $stmt = $this->pdo()->prepare('UPDATE item_instance_sockets SET status = :status WHERE id = :id');
+        $stmt->execute(['id' => $socketId, 'status' => 'empty']);
+    }
+
     public function insertSocketedGem(int $socketId, int $gemItemInstanceId): void
     {
         $stmt = $this->pdo()->prepare('INSERT INTO item_socketed_gems (

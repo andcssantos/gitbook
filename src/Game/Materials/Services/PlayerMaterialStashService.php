@@ -110,7 +110,7 @@ class PlayerMaterialStashService
             'origin_description' => (string) ($row['origin_description'] ?? ''),
             'quantity' => (int) ($row['quantity'] ?? 0),
             'label' => $this->labelForStack($row),
-            'icon_url' => $this->iconUrlForFamily($familyCode),
+            'icon_url' => $this->iconUrlForStack($familyCode, $originCode),
             'craft_source' => [
                 'kind' => 'material_stack',
                 'family_code' => $familyCode,
@@ -133,14 +133,26 @@ class PlayerMaterialStashService
         return "/assets/game/materials/{$familyCode}.png";
     }
 
+    private function iconUrlForStack(string $familyCode, string $originCode): ?string
+    {
+        if ($originCode !== '' && preg_match('/^[a-z0-9_-]+$/i', $originCode)) {
+            $originPath = dirname(__DIR__, 4).'/public/assets/game/materials/'.$originCode.'.png';
+            if (is_file($originPath)) {
+                return '/assets/game/materials/'.$originCode.'.png';
+            }
+        }
+
+        return $this->iconUrlForFamily($familyCode);
+    }
+
     private function labelForStack(array $row): string
     {
-        $family = (string) ($row['family_name'] ?? $row['family_code'] ?? 'Material');
-        $origin = (string) ($row['origin_name'] ?? '');
+        $origin = trim((string) ($row['origin_name'] ?? ''));
+        if ($origin !== '') {
+            return $origin;
+        }
 
-        return $origin !== '' && $origin !== $family
-            ? "{$family} ({$origin})"
-            : $family;
+        return (string) ($row['family_name'] ?? $row['family_code'] ?? 'Material');
     }
 
     private function tableExists(): bool

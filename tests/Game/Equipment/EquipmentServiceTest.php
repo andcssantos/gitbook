@@ -23,6 +23,8 @@ class EquipmentServiceTest extends TestCase
 
         $migration = require __DIR__ . '/../../../database/migrations/2026_07_08_000003_create_evolvaxe_foundation_tables.php';
         $migration->up($this->pdo);
+        $expeditionMigration = require __DIR__ . '/../../../database/migrations/2026_07_11_000029_expedition_state_and_decimal_currency.php';
+        $expeditionMigration->up($this->pdo);
 
         $seed = require __DIR__ . '/../../../database/seeds/001_evolvaxe_foundation_seed.php';
         $seed($this->pdo);
@@ -49,6 +51,7 @@ class EquipmentServiceTest extends TestCase
     public function testBackpackUnequipTransfersExpeditionCarryIntoLinkedContainer(): void
     {
         (new EquipmentService($this->pdo))->equip(1, $this->itemPublicId('small_leather_backpack'));
+        $this->createActiveExpedition();
 
         (new InventoryMoveService($this->pdo))->move(new MoveItemRequest(
             1,
@@ -74,6 +77,7 @@ class EquipmentServiceTest extends TestCase
     public function testBackpackUnequipKeepsPocketItemsInExpeditionCarry(): void
     {
         (new EquipmentService($this->pdo))->equip(1, $this->itemPublicId('small_leather_backpack'));
+        $this->createActiveExpedition();
 
         (new InventoryMoveService($this->pdo))->move(new MoveItemRequest(
             1,
@@ -198,6 +202,24 @@ class EquipmentServiceTest extends TestCase
         $this->assertSame('potion_1', $result['slot_code']);
     }
 
+    public function testConsumableStackCanUsePotionHotbarSlot(): void
+    {
+        $food = $this->createItem('test_food_stack', 'Test Food', 'consumable', 'consumable', [], 1, 20, 5);
+
+        $result = (new EquipmentService($this->pdo))->equip(1, $food);
+
+        $this->assertSame('potion_1', $result['slot_code']);
+    }
+
+    public function testConsumableCanTargetPreferredHotbarSlot(): void
+    {
+        $food = $this->createItem('test_food_slot3', 'Test Food 3', 'consumable', 'consumable', [], 1, 10, 2);
+
+        $result = (new EquipmentService($this->pdo))->equip(1, $food, 'potion_3');
+
+        $this->assertSame('potion_3', $result['slot_code']);
+    }
+
     public function testUnequipSucceedsWhenStaleContainerPlacementExists(): void
     {
         $ring = $this->createItem('test_stale_ring', 'Stale Ring', 'armor', 'ring');
@@ -316,6 +338,19 @@ class EquipmentServiceTest extends TestCase
             'columns' => (int) $row['grid_columns'],
             'rows' => (int) $row['grid_rows'],
         ];
+    }
+
+    private function createActiveExpedition(): void
+    {
+        $stmt = $this->pdo->prepare("INSERT INTO expedition_instances (public_id, player_id, status, expedition_seed, ends_at)
+            VALUES (:public_id, :player_id, :status, :expedition_seed, :ends_at)");
+        $stmt->execute([
+            'public_id' => 'equipment-expedition-active',
+            'player_id' => 1,
+            'status' => 'active',
+            'expedition_seed' => 'equipment-test-seed',
+            'ends_at' => date('Y-m-d H:i:s', time() + 600),
+        ]);
     }
 
     private function createItem(string $code, string $name, string $categoryCode, string $slotCode, array $baseConfig = [], int $stackable = 0, int $maxStack = 1, int $quantity = 1): string

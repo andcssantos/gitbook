@@ -1,0 +1,40 @@
+{
+  "name": "htdocs",
+  "version": "1.0.0",
+  "description": "Um micro-framework PHP com roteamento por convenção, suporte a middlewares e utilitários HTTP.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andcssantos/gitbook.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/andcssantos/gitbook/issues"
+  },
+  "homepage": "https://github.com/andcssantos/gitbook#readme",
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  },
+  "dependencies": {
+    "@tsparticles/all": "^4.3.2",
+    "@tsparticles/basic": "^4.3.2",
+    "@tsparticles/confetti": "^4.3.2",
+    "@tsparticles/engine": "^4.3.2",
+    "@tsparticles/fireworks": "^4.3.2",
+    "@tsparticles/particles": "^4.3.2",
+    "@tsparticles/ribbons": "^4.3.2",
+    "@tsparticles/slim": "^4.3.2",
+    "howler": "^2.2.4",
+    "tsparticles": "^4.3.2"
+  }
+}

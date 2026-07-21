@@ -30,9 +30,11 @@ class ItemInvestigationService
         }
 
         $itemInstanceId = (int) ($item['item_instance_id'] ?? 0);
+        $itemPublicId = (string) ($item['public_id'] ?? $item['item_public_id'] ?? $itemPublicId);
         $quote = (new MarketPriceService($this->connection))->quote($item);
         $profileKey = (string) ($quote['profile_key'] ?? '');
         $power = (new ItemPowerService())->forItem($item);
+        $history = $this->historyForItem($itemInstanceId, $itemPublicId);
 
         return [
             'item' => $item,
@@ -42,6 +44,7 @@ class ItemInvestigationService
                 'market_value' => (int) $quote['market_value'],
                 'npc_value' => (int) $quote['npc_value'],
                 'suggested_premium' => (int) ($quote['suggested_premium'] ?? 0),
+                'breakdown' => is_array($quote['breakdown'] ?? null) ? $quote['breakdown'] : [],
                 'supply' => $this->supplySnapshot($profileKey),
                 'price_history' => $this->priceHistory($itemInstanceId),
             ],
@@ -50,7 +53,8 @@ class ItemInvestigationService
                 'materials' => $this->dismantle->preview($item),
             ],
             'crafting' => $this->craftingHints($item),
-            'history' => $this->historyForItem($itemInstanceId),
+            'history' => $history,
+            'history_summary' => $this->historySummary($history),
             'composition' => $this->composition->resolveForItem($item, true),
         ];
     }
@@ -124,13 +128,13 @@ class ItemInvestigationService
         ]];
     }
 
-    private function historyForItem(int $itemInstanceId): array
+    private function historyForItem(int $itemInstanceId, string $itemPublicId): array
     {
         if ($itemInstanceId <= 0) {
             return [];
         }
 
-        $history = [];
+        $history = (new ItemSafetyService($this->connection))->historyForItem($itemInstanceId, $itemPublicId, 24);
 
         if ($this->tableExists('item_upgrade_events')) {
             $stmt = $this->pdo()->prepare('SELECT from_level, to_level, success, cost_currency_code, created_at
@@ -144,12 +148,24 @@ class ItemInvestigationService
                     $history[] = [
                         'type' => 'bless',
                         'label' => '+'.(int) $row['to_level'].' bless',
+                        'metadata' => [
+                            'from_level' => (int) $row['from_level'],
+                            'to_level' => (int) $row['to_level'],
+                            'success' => true,
+                            'currency' => (string) $row['cost_currency_code'],
+                        ],
                         'created_at' => (string) $row['created_at'],
                     ];
                 } else {
                     $history[] = [
                         'type' => 'bless_fail',
                         'label' => 'Falha de bless (+'.(int) $row['from_level'].')',
+                        'metadata' => [
+                            'from_level' => (int) $row['from_level'],
+                            'to_level' => (int) $row['to_level'],
+                            'success' => false,
+                            'currency' => (string) $row['cost_currency_code'],
+                        ],
                         'created_at' => (string) $row['created_at'],
                     ];
                 }
@@ -168,6 +184,10 @@ class ItemInvestigationService
                 $history[] = [
                     'type' => 'chaos',
                     'label' => 'Chaos: '.(string) $row['name'],
+                    'metadata' => [
+                        'affix' => (string) $row['name'],
+                        'source' => (string) $row['source'],
+                    ],
                     'created_at' => (string) $row['created_at'],
                 ];
             }
@@ -187,14 +207,77 @@ class ItemInvestigationService
                 $history[] = [
                     'type' => 'socket',
                     'label' => 'Gema encaixada: '.(string) $row['name'],
+                    'metadata' => [
+                        'gem' => (string) $row['name'],
+                    ],
                     'created_at' => (string) $row['inserted_at'],
                 ];
             }
         }
 
-        usort($history, fn (array $a, array $b): int => strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? '')));
+        usort($history, fn (array $a, array $b): int => strcmp((string) $b['created_at'], (string) $a['created_at']));
 
-        return array_slice($history, 0, 8);
+        return array_map(fn (array $event): array => $this->normalizeHistoryEvent($event), array_slice($history, 0, 16));
+    }
+
+    private function normalizeHistoryEvent(array $event): array
+    {
+        $type = (string) ($event['type'] ?? 'unknown');
+        $category = $this->historyCategory($type);
+        $tone = $this->historyTone($type);
+
+        return [
+            'type' => $type,
+            'category' => $category,
+            'tone' => $tone,
+            'label' => (string) ($event['label'] ?? ucfirst(str_replace('_', ' ', $type))),
+            'metadata' => is_array($event['metadata'] ?? null) ? $event['metadata'] : null,
+            'created_at' => (string) ($event['created_at'] ?? ''),
+            'source' => (string) ($event['source'] ?? $category),
+        ];
+    }
+
+    private function historyCategory(string $type): string
+    {
+        return match ($type) {
+            'locked', 'unlocked', 'favorited', 'unfavorited', 'wishlisted', 'unwishlisted', 'bulk_action_applied', 'bulk_action_rejected' => 'safety',
+            'sold_npc', 'listed_market', 'market_cancelled', 'market_bought' => 'economy',
+            'dismantled', 'crafted_consumed', 'crafted_created' => 'crafting',
+            'bless', 'bless_fail', 'chaos' => 'enhancement',
+            'socket', 'unsocket' => 'socketing',
+            'discarded' => 'lifecycle',
+            default => 'other',
+        };
+    }
+
+    private function historyTone(string $type): string
+    {
+        return match ($type) {
+            'locked', 'favorited', 'wishlisted', 'bulk_action_applied', 'bless', 'chaos', 'socket' => 'success',
+            'unlocked', 'unfavorited', 'unwishlisted', 'bulk_action_rejected', 'bless_fail' => 'warning',
+            'discarded', 'sold_npc', 'listed_market', 'dismantled', 'crafted_consumed' => 'danger',
+            default => 'info',
+        };
+    }
+
+    private function historySummary(array $history): array
+    {
+        $summary = [
+            'total' => count($history),
+            'categories' => [],
+            'latest_at' => null,
+        ];
+
+        foreach ($history as $event) {
+            $category = (string) ($event['category'] ?? 'other');
+            $summary['categories'][$category] = (int) ($summary['categories'][$category] ?? 0) + 1;
+            $createdAt = (string) ($event['created_at'] ?? '');
+            if ($createdAt !== '' && ($summary['latest_at'] === null || strcmp($createdAt, (string) $summary['latest_at']) > 0)) {
+                $summary['latest_at'] = $createdAt;
+            }
+        }
+
+        return $summary;
     }
 
     private function tableExists(string $table): bool

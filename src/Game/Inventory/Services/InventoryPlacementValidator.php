@@ -25,7 +25,8 @@ class InventoryPlacementValidator
         int $targetX,
         int $targetY,
         bool $rotated,
-        int $expectedPlacementVersion
+        int $expectedPlacementVersion,
+        bool $skipAcceptance = false
     ): array {
         if ((int) ($currentPlacement['locked'] ?? 0) === 1) {
             throw new InventoryException('INVENTORY_ITEM_LOCKED', 'Inventory item placement is locked.');
@@ -41,12 +42,14 @@ class InventoryPlacementValidator
             ]);
         }
 
-        $rejectionCode = $this->acceptance->rejectionCode($targetContainer, $item);
-        if ($rejectionCode !== null) {
-            $message = $rejectionCode === 'INVENTORY_CONTAINER_ITEM_BLOCKED'
-                ? 'Itens-container nao podem ser colocados dentro deste container.'
-                : 'Este container nao aceita o item selecionado.';
-            throw new InventoryException($rejectionCode, $message);
+        if (!$skipAcceptance) {
+            $rejectionCode = $this->acceptance->rejectionCode($targetContainer, $item);
+            if ($rejectionCode !== null) {
+                $message = $rejectionCode === 'INVENTORY_CONTAINER_ITEM_BLOCKED'
+                    ? 'Itens-container nao podem ser colocados dentro deste container.'
+                    : 'Este container nao aceita o item selecionado.';
+                throw new InventoryException($rejectionCode, $message);
+            }
         }
 
         if (!$this->nesting->canPlaceContainerItem($targetContainer, $item)) {
@@ -67,6 +70,8 @@ class InventoryPlacementValidator
                 continue;
             }
 
+            [$otherW, $otherH] = $this->placementFootprint($placement);
+
             if ($this->overlaps(
                 $targetX,
                 $targetY,
@@ -74,8 +79,8 @@ class InventoryPlacementValidator
                 $height,
                 (int) $placement['grid_x'],
                 (int) $placement['grid_y'],
-                (int) $placement['grid_w'],
-                (int) $placement['grid_h']
+                $otherW,
+                $otherH
             )) {
                 throw new InventoryException('INVENTORY_OVERLAP', 'Inventory placement overlaps another item.');
             }
@@ -93,14 +98,17 @@ class InventoryPlacementValidator
         array $targetPlacements,
         int $targetX,
         int $targetY,
-        bool $rotated = false
+        bool $rotated = false,
+        bool $skipAcceptance = false
     ): array {
-        $rejectionCode = $this->acceptance->rejectionCode($targetContainer, $item);
-        if ($rejectionCode !== null) {
-            $message = $rejectionCode === 'INVENTORY_CONTAINER_ITEM_BLOCKED'
-                ? 'Itens-container nao podem ser colocados dentro deste container.'
-                : 'Este container nao aceita o item selecionado.';
-            throw new InventoryException($rejectionCode, $message);
+        if (!$skipAcceptance) {
+            $rejectionCode = $this->acceptance->rejectionCode($targetContainer, $item);
+            if ($rejectionCode !== null) {
+                $message = $rejectionCode === 'INVENTORY_CONTAINER_ITEM_BLOCKED'
+                    ? 'Itens-container nao podem ser colocados dentro deste container.'
+                    : 'Este container nao aceita o item selecionado.';
+                throw new InventoryException($rejectionCode, $message);
+            }
         }
 
         if (!$this->nesting->canPlaceContainerItem($targetContainer, $item)) {
@@ -117,6 +125,8 @@ class InventoryPlacementValidator
         }
 
         foreach ($targetPlacements as $placement) {
+            [$otherW, $otherH] = $this->placementFootprint($placement);
+
             if ($this->overlaps(
                 $targetX,
                 $targetY,
@@ -124,8 +134,8 @@ class InventoryPlacementValidator
                 $height,
                 (int) $placement['grid_x'],
                 (int) $placement['grid_y'],
-                (int) $placement['grid_w'],
-                (int) $placement['grid_h']
+                $otherW,
+                $otherH
             )) {
                 throw new InventoryException('INVENTORY_OVERLAP', 'Inventory placement overlaps another item.');
             }
@@ -137,10 +147,29 @@ class InventoryPlacementValidator
         ];
     }
 
+    /**
+     * @param array<string, mixed> $placement
+     * @return array{0:int,1:int}
+     */
+    private function placementFootprint(array $placement): array
+    {
+        if (isset($placement['definition_grid_w'], $placement['definition_grid_h'])) {
+            return $this->dimensions([
+                'definition_grid_w' => $placement['definition_grid_w'],
+                'definition_grid_h' => $placement['definition_grid_h'],
+            ], (bool) ($placement['rotated'] ?? false));
+        }
+
+        return [
+            max(1, (int) ($placement['grid_w'] ?? 1)),
+            max(1, (int) ($placement['grid_h'] ?? 1)),
+        ];
+    }
+
     private function dimensions(array $item, bool $rotated): array
     {
-        $width = (int) $item['definition_grid_w'];
-        $height = (int) $item['definition_grid_h'];
+        $width = (int) ($item['definition_grid_w'] ?? $item['grid_w'] ?? 1);
+        $height = (int) ($item['definition_grid_h'] ?? $item['grid_h'] ?? 1);
 
         if ($rotated) {
             return [$height, $width];

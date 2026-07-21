@@ -49,6 +49,24 @@ class InventoryStackMergeSplitTest extends TestCase
         $this->assertSame(56.0, $this->compositionQuality('wood-target'));
     }
 
+    public function testMergeRejectsStalePlacementVersion(): void
+    {
+        $this->createStack('wood', 'wood-source', 10, 40.0, 'common', 'starter_forest', true, 0, 0);
+        $this->createStack('wood', 'wood-target', 20, 60.0, 'common', 'starter_forest', true, 2, 0);
+
+        $this->assertInventoryException(
+            fn (): array => (new StackMergeService($this->pdo))->merge(new MergeStackRequest(
+                1,
+                'wood-source',
+                'wood-target',
+                1,
+                999,
+                1
+            )),
+            'INVENTORY_STALE_PLACEMENT'
+        );
+    }
+
     public function testMergeCannotExceedMaxStack(): void
     {
         $this->createStack('wood', 'wood-source', 10, 40.0, 'common', 'starter_forest');

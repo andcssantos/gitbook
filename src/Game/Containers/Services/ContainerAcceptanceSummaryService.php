@@ -7,10 +7,11 @@ use PDO;
 
 class ContainerAcceptanceSummaryService
 {
-    public function __construct(
-        private ?ContainerAcceptanceRuleRepository $rules = null,
-        private ?PDO $pdo = null
-    ) {
+    private ?ContainerAcceptanceRuleRepository $rules;
+
+    public function __construct(?ContainerAcceptanceRuleRepository $rules = null, ?PDO $pdo = null)
+    {
+        $this->rules = $rules;
         $this->rules ??= new ContainerAcceptanceRuleRepository($pdo);
     }
 
@@ -73,7 +74,7 @@ class ContainerAcceptanceSummaryService
             $tone = 'restricted';
             $tooltip = 'Nao aceita baus, bags ou outros containers.';
             $badges = [['icon' => '🚫', 'label' => 'Sem containers', 'code' => 'restricted']];
-        } elseif ($blocksContainers && $allowsContainerItems) {
+        } elseif ($blocksContainers) {
             $label = 'Aceita bags (max 2 niveis)';
             $tone = 'containers';
             $tooltip = 'Aceita containers ate 2 niveis de profundidade.';

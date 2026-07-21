@@ -24,7 +24,7 @@ class InventoryMoveService
     {
         (new MoveItemValidator())->validate($request);
 
-        return $this->transaction(function () use ($request): array {
+        $result = $this->transaction(function () use ($request): array {
             $containers = new ContainerRepository($this->pdo());
             $items = new ItemInstanceRepository($this->pdo());
 
@@ -32,6 +32,8 @@ class InventoryMoveService
             $sourceContainer = $this->loadOwnedContainer($containers, $request->sourceContainerPublicId, $request->playerId, 'INVENTORY_SOURCE_CONTAINER_NOT_FOUND');
             $targetContainer = $this->loadOwnedContainer($containers, $request->targetContainerPublicId, $request->playerId, 'INVENTORY_TARGET_CONTAINER_NOT_FOUND');
             $this->validateContainerFlow($sourceContainer, $targetContainer);
+            $expeditionCarry = new ExpeditionCarryAccessService($this->pdo());
+            $expeditionCarry->assertMoveAllowed($request->playerId, $sourceContainer, $targetContainer);
 
             $currentPlacement = $containers->findPlacement((int) $item['id'], (int) $sourceContainer['id'], true);
             if ($currentPlacement === null) {
@@ -51,7 +53,8 @@ class InventoryMoveService
                 $request->gridX,
                 $request->gridY,
                 $request->rotated,
-                $request->expectedPlacementVersion
+                $request->expectedPlacementVersion,
+                $expeditionCarry->bypassAcceptanceForMove($request->playerId, $sourceContainer, $targetContainer)
             );
 
             $containers->updatePlacement((int) $currentPlacement['id'], [
@@ -82,6 +85,10 @@ class InventoryMoveService
                 'placement_version' => (int) $updated['placement_version'],
             ];
         });
+
+        InventoryStateService::forgetCombatSnapshot($request->playerId);
+
+        return $result;
     }
 
     private function loadOwnedItem(ItemInstanceRepository $items, string $publicId, int $playerId): array

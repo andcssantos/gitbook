@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Bosque Inicial">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e3a5f"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14532d"/>
+      <stop offset="100%" stop-color="#052e16"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="400" fill="url(#sky)"/>
+  <ellipse cx="300" cy="360" rx="340" ry="90" fill="url(#ground)" opacity="0.95"/>
+  <circle cx="90" cy="70" r="36" fill="#fbbf24" opacity="0.35"/>
+  <g opacity="0.55" fill="#166534">
+    <ellipse cx="80" cy="250" rx="50" ry="120"/>
+    <ellipse cx="160" cy="230" rx="60" ry="140"/>
+    <ellipse cx="520" cy="240" rx="70" ry="150"/>
+    <ellipse cx="440" cy="255" rx="55" ry="125"/>
+  </g>
+  <g opacity="0.25" stroke="#4ade80" stroke-width="2" fill="none">
+    <path d="M40 320 Q180 280 300 300 T560 310"/>
+    <path d="M20 340 Q220 310 360 330 T580 350"/>
+  </g>
+</svg>

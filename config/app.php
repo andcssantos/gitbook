@@ -7,4 +7,6 @@ return [
     'timezone' => $_ENV['APP_TIMEZONE'] ?? 'UTC',
     'domain' => $_ENV['DEFAULT_DOMINIO'] ?? '',
     'trust_proxy' => filter_var($_ENV['APP_TRUST_PROXY'] ?? false, FILTER_VALIDATE_BOOLEAN),
+    // Testes locais: sem gasto de energia (start/tick/move). Desligar em prod.
+    'infinite_energy' => filter_var($_ENV['APP_INFINITE_ENERGY'] ?? false, FILTER_VALIDATE_BOOLEAN),
 ];

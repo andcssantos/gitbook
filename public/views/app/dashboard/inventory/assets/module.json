@@ -1,7 +1,7 @@
 {
     "name": "inventory",
-    "version": "1.0.1",
-    "description": "Inventario autenticado do Evolvaxe",
+    "version": "1.1.2",
+    "description": "Inventario ARPG com energia de conjunto e efeitos por raridade",
     "lang": "pt-BR",
     "charset": "UTF-8",
     "type": "page",
@@ -13,8 +13,8 @@
         "preload": true
     },
     "seo": {
-        "title": "Evolvaxe | Inventario",
-        "description": "Modulo de inventario do Evolvaxe",
+        "title": "Evolvaxe | Base",
+        "description": "Hub jogavel do Evolvaxe",
         "meta": [
             {
                 "name": "robots",

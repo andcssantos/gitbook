@@ -73,6 +73,36 @@ return [
     ],
     'recipes' => [
         [
+            'code' => 'forge_old_wood_sword',
+            'name' => 'Espada de Madeira Improvisada',
+            'workspace' => 'forge',
+            'discovery' => 'public',
+            'gold_fee' => 5,
+            'description' => 'Amarra um galho ou madeira velha com uma tira de couro para criar uma espada inicial improvisada.',
+            'requirements' => [
+                ['kind' => 'material_family', 'family_code' => 'wood', 'min' => 1, 'label' => 'Madeira, Galho ou Madeira Velha', 'weight' => 2],
+                ['kind' => 'material_family', 'family_code' => 'leather', 'min' => 1, 'label' => 'Couro ou Tira de Couro', 'weight' => 1],
+            ],
+            'outputs' => [
+                ['definition_code' => 'old_wood_sword', 'name' => 'Espada de Madeira Improvisada', 'quality_bucket' => 'common', 'weight' => 1],
+            ],
+        ],
+        [
+            'code' => 'forge_old_wood_metal_sword',
+            'name' => 'Lamina de Ferro Velho',
+            'workspace' => 'forge',
+            'discovery' => 'public',
+            'gold_fee' => 20,
+            'description' => 'Funde metal sobre a espada de madeira improvisada para reforcar a lamina com ferro velho.',
+            'requirements' => [
+                ['kind' => 'item_definition', 'definition_code' => 'old_wood_sword', 'min' => 1, 'label' => 'Espada de Madeira Improvisada', 'weight' => 3],
+                ['kind' => 'material_family', 'family_code' => 'metal', 'min' => 2, 'label' => 'Metal', 'weight' => 2],
+            ],
+            'outputs' => [
+                ['definition_code' => 'old_wood-metal_sword', 'name' => 'Espada de Madeira com Lamina de Ferro Velho', 'quality_bucket' => 'common', 'weight' => 1],
+            ],
+        ],
+        [
             'code' => 'forge_stone_pickaxe',
             'name' => 'Picareta de Pedra',
             'workspace' => 'forge',
@@ -132,6 +162,21 @@ return [
             'outputs' => [
                 ['definition_code' => 'iron_sword', 'name' => 'Iron Sword', 'quality_bucket' => 'rare', 'weight' => 1],
                 ['definition_code' => 'stone_pickaxe', 'name' => 'Stone Pickaxe', 'quality_bucket' => 'magic', 'weight' => 2],
+            ],
+        ],
+        [
+            'code' => 'echo_compass',
+            'name' => 'Bussola Ecoante',
+            'workspace' => 'alchemy',
+            'discovery' => 'public',
+            'gold_fee' => 35,
+            'description' => 'Une Fragmentos de Eco com madeira para criar a chave da Gruta Ecoante.',
+            'requirements' => [
+                ['kind' => 'item_definition', 'definition_code' => 'season_echo_fragment', 'min' => 2, 'label' => 'Fragmento de Eco', 'weight' => 3],
+                ['kind' => 'material_family', 'family_code' => 'wood', 'min' => 1, 'label' => 'Madeira', 'weight' => 1],
+            ],
+            'outputs' => [
+                ['definition_code' => 'echo_compass', 'name' => 'Bussola Ecoante', 'quality_bucket' => 'rare', 'weight' => 1],
             ],
         ],
     ],

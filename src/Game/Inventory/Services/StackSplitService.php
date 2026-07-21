@@ -38,6 +38,8 @@ class StackSplitService
 
             $sourceContainer = $this->loadOwnedContainer($containers, $request->sourceContainerPublicId, $request->playerId, 'INVENTORY_SOURCE_CONTAINER_NOT_FOUND');
             $targetContainer = $this->loadOwnedContainer($containers, $request->targetContainerPublicId, $request->playerId, 'INVENTORY_TARGET_CONTAINER_NOT_FOUND');
+            $expeditionCarry = new ExpeditionCarryAccessService($this->pdo());
+            $expeditionCarry->assertMoveAllowed($request->playerId, $sourceContainer, $targetContainer);
 
             $sourcePlacement = $containers->findPlacement((int) $source['id'], (int) $sourceContainer['id'], true);
             if ($sourcePlacement === null) {
@@ -56,7 +58,9 @@ class StackSplitService
                 $targetContainer,
                 $targetPlacements,
                 $request->gridX,
-                $request->gridY
+                $request->gridY,
+                false,
+                $expeditionCarry->bypassAcceptanceForMove($request->playerId, $sourceContainer, $targetContainer)
             );
 
             $splitItemId = $items->createSplitStack($source, $request->quantity);
@@ -72,6 +76,8 @@ class StackSplitService
             ]);
 
             $items->updateStack((int) $source['id'], (int) $source['quantity'] - $request->quantity, $source['quality_value'] !== null ? (float) $source['quality_value'] : null);
+            $this->bumpPlacementVersion((int) $source['id']);
+            $sourcePlacementAfter = $containers->findPlacement((int) $source['id'], (int) $sourceContainer['id']);
             $placement = $containers->findPlacementById($placementId);
             $publicId = (string) $this->pdo()->query('SELECT public_id FROM item_instances WHERE id = ' . (int) $splitItemId)->fetchColumn();
 
@@ -86,8 +92,18 @@ class StackSplitService
                 'grid_w' => (int) ($placement['grid_w'] ?? $size['grid_w']),
                 'grid_h' => (int) ($placement['grid_h'] ?? $size['grid_h']),
                 'placement_version' => (int) ($placement['placement_version'] ?? 1),
+                'source_placement_version' => (int) ($sourcePlacementAfter['placement_version'] ?? 0),
             ];
         });
+    }
+
+    private function bumpPlacementVersion(int $itemInstanceId): void
+    {
+        $this->pdo()->prepare(
+            'UPDATE container_items
+             SET placement_version = placement_version + 1
+             WHERE item_instance_id = :item_instance_id'
+        )->execute(['item_instance_id' => $itemInstanceId]);
     }
 
     private function loadOwnedItem(ItemInstanceRepository $items, string $publicId, int $playerId): array
